@@ -47,7 +47,7 @@ Features: TE/TM joint inversion, 3D/6D Sinkhorn OT, mode switch (`3dot`/`6dot`/`
 
 ## Environment and Dependencies
 
-- Python ≥ 3.8
+- Python ≥ 3.10
 - PyTorch (CPU or GPU)
 - numpy, matplotlib
 - Optional: **geomloss** for Sinkhorn OT
@@ -72,7 +72,7 @@ from mt1d_inv import MT1D, MT1DInverter
 from mt2d_inv.MT2D import MT2DFD_Torch
 ```
 
-Or use `pip install -e .` with [setup.py](setup.py).
+Or use `pip install -e .[ot,dev]` with [setup.py](setup.py).
 
 ---
 
