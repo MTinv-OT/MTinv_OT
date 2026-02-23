@@ -155,9 +155,6 @@ Or in one command: `pip install -e ".[ot,dev]"`. Then open and run:
 See [LICENSE](LICENSE) in the repository root.
 
 ---
-
----
-# 中文版本 / Chinese Version
 ---
 
 ## MTinv_OT：基于最优传输（OT）的 MT 1D/2D 反演与正演工具箱
