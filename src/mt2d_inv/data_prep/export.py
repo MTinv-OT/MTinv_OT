@@ -1,12 +1,13 @@
 """Export tensors for 2D inversion."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from .edi import EdiMixin
 
-import torch
 
 class ExportMixin:
     def export_data_dict_for_2d_inversion(
@@ -212,6 +213,7 @@ class ExportMixin:
             pass
         return np.asarray(yn, dtype=np.float64).reshape(-1)
 
+    @staticmethod
     def export_mt_object_to_txt(
         mt_object: Any,
         txt_path: Union[str, Path],
@@ -318,7 +320,7 @@ class ExportMixin:
         pn_ok = isinstance(phs_noise_std_norm, np.ndarray) and phs_noise_std_norm.shape == Z_arr.shape
 
         if include_derived and ((not rho_ok) or (not phs_ok) or (include_errors and ((not rho_err_ok) or (not phs_err_ok) or (not rn_ok) or (not pn_ok)))):
-            rho_calc, phs_calc, rho_err_calc, phs_err_calc, rn_calc, pn_calc = PrepareData.impedance_to_rho_phase(
+            rho_calc, phs_calc, rho_err_calc, phs_err_calc, rn_calc, pn_calc = EdiMixin.impedance_to_rho_phase(
                 freqs_hz=freqs,
                 Z=Z_arr,
                 Z_err=Z_err_arr if include_errors else None,

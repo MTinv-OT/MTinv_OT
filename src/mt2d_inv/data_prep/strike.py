@@ -281,6 +281,7 @@ class StrikeMixin:
 
     # -------------------------- strike plotting --------------------------
 
+    @staticmethod
     def _unwrap_strike_90(period: np.ndarray, strike: np.ndarray) -> np.ndarray:
         """Unwrap strike by 90° to minimize jumps (MT strike has 90° ambiguity).
         Sorts by period, then for each point picks θ or θ±90° to be closest to previous.
@@ -301,6 +302,7 @@ class StrikeMixin:
         out[orig_valid_idx] = unwrapped
         return out
 
+    @staticmethod
     def project_stations_perpendicular(lats: np.ndarray, lons: np.ndarray, strike: float) -> np.ndarray:
         lat0, lon0 = float(lats[0]), float(lons[0])
         d_lat = (lats - lat0) * 111.132

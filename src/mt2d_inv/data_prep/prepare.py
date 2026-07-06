@@ -16,7 +16,15 @@ from .prior import PriorMixin
 from .strike import StrikeMixin
 from ..plotting.prepare_data import PrepareDataPlotMixin
 
-class PrepareData:
+
+class PrepareData(
+    EdiMixin,
+    CleaningMixin,
+    ExportMixin,
+    PriorMixin,
+    StrikeMixin,
+    PrepareDataPlotMixin,
+):
     """
     - 读取 EDI -> `CustomMT` 列表
     - 相位张量/走向/偏角修正
@@ -89,14 +97,6 @@ class PrepareData:
 
     # -------------------------- ctor / config --------------------------
 
-class PrepareData(
-    EdiMixin,
-    CleaningMixin,
-    ExportMixin,
-    PriorMixin,
-    StrikeMixin,
-    PrepareDataPlotMixin,
-):
     def __init__(
         self,
         edi_dir: str = "AKBST-AMT-L08",

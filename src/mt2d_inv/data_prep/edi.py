@@ -1,6 +1,7 @@
 """EDI parsing and impedance transforms."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -8,6 +9,7 @@ import numpy as np
 
 
 class EdiMixin:
+    @staticmethod
     def parse_dms(dms_str: str) -> float:
         """DMS to decimal."""
 
@@ -24,7 +26,7 @@ class EdiMixin:
 
     @staticmethod
     def _module_dir() -> Path:
-        return Path(__file__).resolve().parent
+        return Path(__file__).resolve().parent.parent
 
     # -------------------------- EDI parser --------------------------
 
@@ -181,6 +183,7 @@ class EdiMixin:
             T=T_out,
         )
 
+    @classmethod
     def _mv_per_km_per_nt_to_ohm_scale(cls) -> float:
         """Convert impedance from (mV/km)/nT to ohm.
 
