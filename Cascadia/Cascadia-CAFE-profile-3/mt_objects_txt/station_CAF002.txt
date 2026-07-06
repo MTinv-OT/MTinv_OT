@@ -1,0 +1,25 @@
+# export_mt_object_to_txt
+# station_id: CAF002
+# lat: 47.07836869444445
+# lon: -124.10465777777777
+# profile_pos_m: -15874.247683965677
+# n_freq: 17
+# columns: freq_hz	period_s	Zxx_real	Zxx_imag	Zxy_real	Zxy_imag	Zyx_real	Zyx_imag	Zyy_real	Zyy_imag	Zxx_err	Zxy_err	Zyx_err	Zyy_err	rho_xx	rho_xy	rho_yx	rho_yy	phs_xx_deg	phs_xy_deg	phs_yx_deg	phs_yy_deg	rho_err_xx	rho_err_xy	rho_err_yx	rho_err_yy	phs_err_xx_deg	phs_err_xy_deg	phs_err_yx_deg	phs_err_yy_deg	rho_noise_std_log10_xx	rho_noise_std_log10_xy	rho_noise_std_log10_yx	rho_noise_std_log10_yy	phs_noise_std_norm_xx	phs_noise_std_norm_xy	phs_noise_std_norm_yx	phs_noise_std_norm_yy
+freq_hz	period_s	Zxx_real	Zxx_imag	Zxy_real	Zxy_imag	Zyx_real	Zyx_imag	Zyy_real	Zyy_imag	Zxx_err	Zxy_err	Zyx_err	Zyy_err	rho_xx	rho_xy	rho_yx	rho_yy	phs_xx_deg	phs_xy_deg	phs_yx_deg	phs_yy_deg	rho_err_xx	rho_err_xy	rho_err_yx	rho_err_yy	phs_err_xx_deg	phs_err_xy_deg	phs_err_yx_deg	phs_err_yy_deg	rho_noise_std_log10_xx	rho_noise_std_log10_xy	rho_noise_std_log10_yx	rho_noise_std_log10_yy	phs_noise_std_norm_xx	phs_noise_std_norm_xy	phs_noise_std_norm_yx	phs_noise_std_norm_yy
+2.154430e-04	4.641599e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+3.162270e-04	3.162285e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+4.641580e-04	2.154439e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+6.812920e-04	1.467799e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.000000e-03	1.000000e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.467800e-03	6.812917e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+2.154430e-03	4.641599e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+3.162270e-03	3.162285e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+4.641580e-03	2.154439e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+6.812920e-03	1.467799e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.000000e-02	1.000000e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.467800e-02	6.812917e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+2.154430e-02	4.641599e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+3.162270e-02	3.162285e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+4.641600e-02	2.154430e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+6.812920e-02	1.467799e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.000000e-01	1.000000e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan

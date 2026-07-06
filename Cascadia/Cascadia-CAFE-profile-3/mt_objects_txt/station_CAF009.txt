@@ -1,0 +1,25 @@
+# export_mt_object_to_txt
+# station_id: CAF009
+# lat: 47.081940583333335
+# lon: -123.67962805555555
+# profile_pos_m: 16386.18280530696
+# n_freq: 17
+# columns: freq_hz	period_s	Zxx_real	Zxx_imag	Zxy_real	Zxy_imag	Zyx_real	Zyx_imag	Zyy_real	Zyy_imag	Zxx_err	Zxy_err	Zyx_err	Zyy_err	rho_xx	rho_xy	rho_yx	rho_yy	phs_xx_deg	phs_xy_deg	phs_yx_deg	phs_yy_deg	rho_err_xx	rho_err_xy	rho_err_yx	rho_err_yy	phs_err_xx_deg	phs_err_xy_deg	phs_err_yx_deg	phs_err_yy_deg	rho_noise_std_log10_xx	rho_noise_std_log10_xy	rho_noise_std_log10_yx	rho_noise_std_log10_yy	phs_noise_std_norm_xx	phs_noise_std_norm_xy	phs_noise_std_norm_yx	phs_noise_std_norm_yy
+freq_hz	period_s	Zxx_real	Zxx_imag	Zxy_real	Zxy_imag	Zyx_real	Zyx_imag	Zyy_real	Zyy_imag	Zxx_err	Zxy_err	Zyx_err	Zyy_err	rho_xx	rho_xy	rho_yx	rho_yy	phs_xx_deg	phs_xy_deg	phs_yx_deg	phs_yy_deg	rho_err_xx	rho_err_xy	rho_err_yx	rho_err_yy	phs_err_xx_deg	phs_err_xy_deg	phs_err_yx_deg	phs_err_yy_deg	rho_noise_std_log10_xx	rho_noise_std_log10_xy	rho_noise_std_log10_yx	rho_noise_std_log10_yy	phs_noise_std_norm_xx	phs_noise_std_norm_xy	phs_noise_std_norm_yx	phs_noise_std_norm_yy
+2.154430e-04	4.641599e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+3.162270e-04	3.162285e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+4.641580e-04	2.154439e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+6.812920e-04	1.467799e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.000000e-03	1.000000e+03	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.467800e-03	6.812917e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+2.154430e-03	4.641599e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+3.162270e-03	3.162285e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+4.641580e-03	2.154439e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+6.812920e-03	1.467799e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.000000e-02	1.000000e+02	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.467800e-02	6.812917e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+2.154430e-02	4.641599e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+3.162270e-02	3.162285e+01	1.099084e-05	2.881297e-05	3.951647e-04	3.756994e-04	-4.119321e-04	-3.735715e-04	-7.459484e-05	2.087182e-05	2.266643e-05	5.072636e-05	5.270942e-05	2.646869e-05	3.808775e-03	1.190731e+00	1.238546e+00	2.403058e-02	6.912041e+01	4.355351e+01	4.220414e+01	1.563175e+01	5.599013e-03	2.215523e-01	2.347902e-01	1.642291e-02	4.211325e+01	5.330342e+00	5.430758e+00	1.957846e+01	6.384258e-01	8.080659e-02	8.232886e-02	2.968043e-01	4.679250e-01	5.922603e-02	6.034176e-02	2.175385e-01
+4.641600e-02	2.154430e+01	2.421924e-05	4.126677e-05	4.340251e-04	4.570006e-04	-4.586774e-04	-4.514068e-04	-6.109103e-05	4.035012e-05	2.548630e-05	5.471817e-05	5.649545e-05	2.714718e-05	6.247218e-03	1.083881e+00	1.130065e+00	1.462606e-02	5.959156e+01	4.647707e+01	4.454228e+01	3.344443e+01	6.655052e-03	1.882018e-01	1.984113e-01	1.084650e-02	3.051810e+01	4.974330e+00	5.029857e+00	2.124492e+01	4.626463e-01	7.540954e-02	7.625131e-02	3.220673e-01	3.390900e-01	5.527034e-02	5.588730e-02	2.360546e-01
+6.812920e-02	1.467799e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
+1.000000e-01	1.000000e+01	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan	nan
