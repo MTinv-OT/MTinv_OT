@@ -1,0 +1,2 @@
+﻿run_name,timestamp,run_dir,epochs,final_misfit,best_misfit,total_time_s,avg_epoch_time_s,forward_ms,data_prep_ms,data_term_ms,backward_ms,step_ms,reg_ms,rmse,mape,correlation,ssim,anomaly_rmse,anomaly_mape,peak_gpu_mem_GB
+mse_21_1shift0.15,2026-07-06_13-14-58,2026-07-06_13-14-58_mse_21_1shift0.15,300,9.005022289888114,9.005022289888114,537.1339240074158,1.7899115816752116,,,,,,,0.2451784462771744,9.404780319281752,0.0851531685022097,0.1272275325308838,,,0.13098812103271484

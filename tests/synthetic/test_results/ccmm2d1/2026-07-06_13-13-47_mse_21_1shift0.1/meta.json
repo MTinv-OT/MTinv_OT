@@ -1,0 +1,24 @@
+{
+  "model_tag": "ccmm2d1",
+  "run_name": "mse_21_1shift0.1",
+  "timestamp": "2026-07-06_13-13-47",
+  "mode": "mse",
+  "ot_config": {
+    "p": 2,
+    "blur": 0.01,
+    "scaling": 0.9,
+    "reach": null,
+    "sigma_min": 0.03,
+    "sigma_6d": null
+  },
+  "cost_weights": {
+    "w_s": 1.0,
+    "w_f": 1.0,
+    "w_d": {
+      "rhoxy": 1.0,
+      "phsxy": 1.0,
+      "rhoyx": 1.0,
+      "phsyx": 1.0
+    }
+  }
+}
