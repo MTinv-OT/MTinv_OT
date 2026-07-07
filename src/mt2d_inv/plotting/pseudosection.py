@@ -47,7 +47,6 @@ def plot_apparent_resistivity_pseudosection(
     stations: np.ndarray,
     rho: np.ndarray,
     *,
-    title: str = "Apparent resistivity",
     cmap: str = "jet_r",
     log_y: bool = True,
     vmin: Optional[float] = None,
@@ -84,7 +83,6 @@ def plot_apparent_resistivity_pseudosection(
         ax.set_yscale("log")
     ax.set_xlabel("Distance (km)")
     ax.set_ylabel("Period (s)")
-    ax.set_title(title)
     ax.invert_yaxis()
     if add_colorbar:
         plt.colorbar(pcm, ax=ax, label="ρ_a (Ω·m)")
@@ -113,7 +111,6 @@ def plot_pseudosection_from_npz(
         d["freqs"], d["stations"], d[key], title=title, **kwargs
     )
 
-
 def plot_inversion_pseudosection_comparison(
     freqs: np.ndarray,
     stations: np.ndarray,
@@ -141,9 +138,18 @@ def plot_inversion_pseudosection_comparison(
         vmin_u, vmax_u = float(vmin), float(vmax)
 
     n = len(rho_dict)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 5), squeeze=False)
+    
+    # ✅ 使用 GridSpec 明确分配空间：n 个子图 + 1 个 colorbar 位置
+    fig = plt.figure(figsize=(5 * n + 1, 5))  # 额外加宽 1 英寸给 colorbar
+    gs = fig.add_gridspec(1, n + 1, width_ratios=[1] * n + [0.05], wspace=0.3)
+    
+    axes = []
+    for i in range(n):
+        ax = fig.add_subplot(gs[0, i])
+        axes.append(ax)
+    
     last_pcm = None
-    for ax, (label, rho) in zip(axes[0], rho_dict.items()):
+    for ax, (label, rho) in zip(axes, rho_dict.items()):
         freqs_a = np.asarray(freqs, dtype=float).reshape(-1)
         stations_a = np.asarray(stations, dtype=float).reshape(-1)
         st_km = stations_a / 1000.0
@@ -158,20 +164,20 @@ def plot_inversion_pseudosection_comparison(
         ax.set_ylabel("Period (s)")
         ax.set_title(label)
         ax.invert_yaxis()
+    
     if last_pcm is not None:
-        fig.colorbar(
-            last_pcm,
-            ax=list(axes[0]),
-            label="ρ_a (Ω·m)",
-            fraction=0.025,
-            pad=0.02,
-        )
+        # ✅ colorbar 放在单独预留的 GridSpec 位置
+        cax = fig.add_subplot(gs[0, -1])
+        fig.colorbar(last_pcm, cax=cax, label="ρ_a (Ω·m)")
+    
     if suptitle:
-        fig.suptitle(suptitle)
+        fig.suptitle(suptitle, fontsize=18, y=1.02) 
+    
     plt.tight_layout()
+    
     if show:
         plt.show()
-    return axes
+    return np.array(axes)
 
 
 def plot_ot_mse_pseudosection_from_npz(
@@ -225,12 +231,11 @@ def plot_ot_mse_pseudosection_from_npz(
         freqs,
         stations,
         rho_obs,
-        title=f"Observed ({comp})",
         cmap=cmap,
         vlim_percentiles=observed_vlim_percentiles,
         show=False,
     )
-    ax_obs.figure.suptitle(f"ρ_a pseudosection ({comp}) — Observed (own scale)")
+    ax_obs.figure.suptitle(f"ρ_a pseudosection ({comp}) — Observed (own scale)", fontsize=18, y=1.05)
 
     if show:
         plt.show()
