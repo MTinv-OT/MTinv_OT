@@ -19,7 +19,7 @@ class InversionDataMixin:
         static_shift_std: float = 0.0,      # 随机静位移的标准差(对数域)。当提供 static_shift_log 时对对应模式无效
         shift_modes: tuple = ("xy", "yx"),  # 注入静位移的模式
         shift_stations: str = "middle",     # 注入静位移的台站选择方式 ('all', 'middle', 'random')
-        shift_ratio: float = 0.1,
+        shift_ratio: float = 0,
         # 新增：指定确切台站序号（0-based），优先级高于 shift_stations / shift_ratio
         shift_station_indices: Optional[Sequence[int]] = None,
         # 新增：固定静位移强度（log10 乘子）。可 TE/TM 分别设置。
@@ -143,6 +143,7 @@ class InversionDataMixin:
         # 保存用户传入的固定静位移规格（用于复现/记录）
         self.static_shift_log_input = static_shift_log if static_shift_log is not None else None
         self.true_data_no_shift = {}
+        self.obs_data_no_shift = {}
         self.static_shift_factors = {}
         self.static_shift_log = {}
 
@@ -150,7 +151,8 @@ class InversionDataMixin:
         actual_affected = torch.zeros(n_station, dtype=torch.bool, device=self.device)
 
         for mode in ["xy", "yx"]:
-            Z = pred_true[f"Z{mode}"]      # (nf, nstation)
+            Z_base = pred_true[f"Z{mode}"].clone()      # (nf, nstation)
+            Z = Z_base
 
             # 静位移前：真实模型正演视电阻率/相位（无静位移、无噪声）
             rho_true_clean = torch.abs(Z) ** 2 / (omega * MU)
@@ -237,6 +239,10 @@ class InversionDataMixin:
                 noise_real = torch.randn_like(Z.real) * delta
                 noise_imag = torch.randn_like(Z.imag) * delta
 
+            Z_obs_no_shift = torch.complex(
+                Z_base.real + noise_real,
+                Z_base.imag + noise_imag
+            )
             Z_obs = torch.complex(
                 Z.real + noise_real,
                 Z.imag + noise_imag
@@ -252,17 +258,25 @@ class InversionDataMixin:
                 mask = mask.reshape(Z_obs.shape)
                 out_real = torch.randn_like(Z.real) * (outlier_strength * delta)
                 out_imag = torch.randn_like(Z.imag) * (outlier_strength * delta)
+                Z_obs_no_shift = torch.complex(
+                    Z_obs_no_shift.real + torch.where(mask, out_real, torch.zeros_like(Z_obs_no_shift.real)),
+                    Z_obs_no_shift.imag + torch.where(mask, out_imag, torch.zeros_like(Z_obs_no_shift.imag))
+                )
                 Z_obs = torch.complex(
                     Z_obs.real + torch.where(mask, out_real, torch.zeros_like(Z_obs.real)),
                     Z_obs.imag + torch.where(mask, out_imag, torch.zeros_like(Z_obs.imag))
                 )
 
             # -------- Compute rho / phi from impedance --------
+            rho_obs_no_shift = torch.abs(Z_obs_no_shift) ** 2 / (omega * MU)
+            phs_obs_no_shift = -torch.atan2(Z_obs_no_shift.imag, Z_obs_no_shift.real) * 180.0 / np.pi
             rho_obs = torch.abs(Z_obs) ** 2 / (omega * MU)
             phs_obs = -torch.atan2(Z_obs.imag, Z_obs.real) * 180.0 / np.pi
 
             obs_data[f"rho{mode}"] = rho_obs
             obs_data[f"phs{mode}"] = phs_obs
+            self.obs_data_no_shift[f"rho{mode}"] = rho_obs_no_shift
+            self.obs_data_no_shift[f"phs{mode}"] = phs_obs_no_shift
 
             # Store impedance errors for calculate_data_errors_2d
             self.data_std[f"delta_z{mode}_real"] = delta

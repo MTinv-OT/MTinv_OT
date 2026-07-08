@@ -232,6 +232,11 @@ class ExperimentLogger:
             if key in obs_data:
                 arrays[f"obs_{key}"] = self._to_numpy(obs_data[key])
 
+        obs_data_no_shift = getattr(inv, "obs_data_no_shift", None) or {}
+        for key in ("rhoxy", "rhoyx", "phsxy", "phsyx"):
+            if key in obs_data_no_shift:
+                arrays[f"obs_no_shift_{key}"] = self._to_numpy(obs_data_no_shift[key])
+
         try:
             with torch.no_grad():
                 sigma_full = inv.get_sigma_full()
@@ -413,7 +418,7 @@ class ExperimentLogger:
                     fit_kw["plot_noise_cap"] = plot_kwargs["plot_noise_cap"]
                 if plot_kwargs.get("data_fitting_station_indices") is not None:
                     fit_kw["station_indices"] = plot_kwargs["data_fitting_station_indices"]
-                batch_size = int(plot_kwargs.get("data_fitting_batch_size", 1))
+                batch_size = int(plot_kwargs.get("data_fitting_batch_size", 3))
                 fit_kw["stations_per_figure"] = batch_size
 
                 station_indices = fit_kw.get("station_indices")

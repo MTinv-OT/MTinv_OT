@@ -639,7 +639,7 @@ def plot_data_fitting(
         inv,
         station_indices=None,
         *,
-        stations_per_figure: int = 1,
+        stations_per_figure: int = 3,
         plot_noise_cap: Optional[float] = None,
         show: bool = True,
     ) -> Union[Figure, List[Figure]]:
@@ -650,8 +650,8 @@ def plot_data_fitting(
             Which stations to plot. ``None`` (default) = **all** stations.
             Pass a single ``int`` or a list to plot a subset, e.g. ``[0, 10, 20]``.
         stations_per_figure
-            How many station columns per figure. Default 1 (one station per figure).
-            Increase (e.g. 3) to group multiple stations on one wide figure.
+            How many station columns per figure. Default 3 (three station panels per row).
+            Single-station figures are laid out with three columns to keep the display compact.
         plot_noise_cap: Optional upper limit on **displayed** error-bar sigmas only, in the same
             units as ``data_noise_std`` (log10(ρ) std for rho*; (φ/90) std for phs*). Does not
             affect ``_compute_data_weights``, RMS χ², or OT — lowering σ in the inversion path
@@ -693,13 +693,14 @@ def plot_data_fitting(
         for batch_start in range(0, len(station_indices), stations_per_figure):
             batch = station_indices[batch_start : batch_start + stations_per_figure]
             n_plots = len(batch)
+            n_cols = 3 if n_plots == 1 else min(n_plots, max(1, int(stations_per_figure)))
             fig, axes = plt.subplots(
-                2, n_plots,
-                figsize=(5 * n_plots, 9),
+                2, n_cols,
+                figsize=(5 * n_cols, 9),
                 sharex=True,
             )
-            if n_plots == 1:
-                axes = axes.reshape(2, 1)
+            if np.ndim(axes) == 1:
+                axes = axes.reshape(2, -1)
             rho_obs_all = []
             for i, st_idx in enumerate(batch):
                 st_id = None
@@ -716,11 +717,21 @@ def plot_data_fitting(
                         continue
                     rho_obs = inv.obs_data[key_rho][:, st_idx].cpu().numpy()
                     rho_pred = pred_dict[key_rho][:, st_idx].cpu().numpy()
+                    rho_obs_no_shift = None
+                    if hasattr(inv, "obs_data_no_shift") and isinstance(getattr(inv, "obs_data_no_shift", None), dict):
+                        rho_obs_no_shift = inv.obs_data_no_shift.get(key_rho, None)
+                        if rho_obs_no_shift is not None:
+                            rho_obs_no_shift = rho_obs_no_shift[:, st_idx].cpu().numpy()
                     valid = np.isfinite(rho_obs) & (rho_obs > 0)
+                    if rho_obs_no_shift is not None:
+                        valid = valid & np.isfinite(rho_obs_no_shift) & (rho_obs_no_shift > 0)
                     if np.any(valid):
                         rho_obs_valid = rho_obs[valid]
                         freqs_valid = freqs[valid]
                         rho_obs_all.append(rho_obs_valid)
+                        rho_obs_no_shift_valid = None
+                        if rho_obs_no_shift is not None:
+                            rho_obs_no_shift_valid = rho_obs_no_shift[valid]
                         sigma_log_eff_t = inv.get_effective_data_noise_std(key_rho)
                         if sigma_log_eff_t is None:
                             sigma_log_eff = np.full_like(rho_obs_valid, sigma_rho_floor, dtype=float)
@@ -731,6 +742,17 @@ def plot_data_fitting(
                         rho_up = rho_obs_valid * 10.0 ** sigma_log_eff
                         rho_dn = rho_obs_valid * 10.0 ** (-sigma_log_eff)
                         yerr = [rho_obs_valid - rho_dn, rho_up - rho_obs_valid]
+                        if rho_obs_no_shift_valid is not None and getattr(inv, "shift_mask", None) is not None:
+                            try:
+                                is_shifted_station = bool(inv.shift_mask[int(st_idx)].item())
+                            except Exception:
+                                is_shifted_station = bool(inv.shift_mask[int(st_idx)])
+                            if is_shifted_station:
+                                ax_rho.plot(
+                                    freqs_valid, rho_obs_no_shift_valid,
+                                    "C3--", lw=1.5,
+                                    label=f"Obs {mode.upper()} (before shift)"
+                                )
                         ax_rho.errorbar(
                             freqs_valid, rho_obs_valid, yerr=yerr,
                             fmt='o', ms=4, alpha=0.6,
@@ -763,10 +785,20 @@ def plot_data_fitting(
                         continue
                     phs_obs = inv.obs_data[key_phs][:, st_idx].cpu().numpy()
                     phs_pred = pred_dict[key_phs][:, st_idx].cpu().numpy()
+                    phs_obs_no_shift = None
+                    if hasattr(inv, "obs_data_no_shift") and isinstance(getattr(inv, "obs_data_no_shift", None), dict):
+                        phs_obs_no_shift = inv.obs_data_no_shift.get(key_phs, None)
+                        if phs_obs_no_shift is not None:
+                            phs_obs_no_shift = phs_obs_no_shift[:, st_idx].cpu().numpy()
                     valid = np.isfinite(phs_obs)
+                    if phs_obs_no_shift is not None:
+                        valid = valid & np.isfinite(phs_obs_no_shift)
                     if np.any(valid):
                         phs_obs_valid = phs_obs[valid]
                         freqs_valid = freqs[valid]
+                        phs_obs_no_shift_valid = None
+                        if phs_obs_no_shift is not None:
+                            phs_obs_no_shift_valid = phs_obs_no_shift[valid]
                         sigma_norm_eff_t = inv.get_effective_data_noise_std(key_phs)
                         if sigma_norm_eff_t is None:
                             sigma_norm_eff = np.full_like(
@@ -779,6 +811,17 @@ def plot_data_fitting(
                         if bar_cap is not None:
                             sigma_norm_eff = np.minimum(sigma_norm_eff, bar_cap)
                         yerr = sigma_norm_eff * 90.0
+                        if phs_obs_no_shift_valid is not None and getattr(inv, "shift_mask", None) is not None:
+                            try:
+                                is_shifted_station = bool(inv.shift_mask[int(st_idx)].item())
+                            except Exception:
+                                is_shifted_station = bool(inv.shift_mask[int(st_idx)])
+                            if is_shifted_station:
+                                ax_phs.plot(
+                                    freqs_valid, phs_obs_no_shift_valid,
+                                    "C3--", lw=1.5,
+                                    label=f"Obs {mode.upper()} (before shift)"
+                                )
                         ax_phs.errorbar(
                             freqs_valid, phs_obs_valid, yerr=yerr,
                             fmt='o', ms=4, alpha=0.6,
@@ -805,7 +848,7 @@ def plot_data_fitting(
                     ymax = float(rho_valid.max()) * 2.0
                 else:
                     ymin, ymax = 1.0, 1e6
-                for ax in axes[0, :]:
+                for ax in axes[0, :n_plots]:
                     ax.set_ylim(ymin, ymax)
             axes[0, 0].invert_xaxis()
             axes[0, 0].set_xlim(freqs.max(), freqs.min())

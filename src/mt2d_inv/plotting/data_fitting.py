@@ -33,6 +33,7 @@ def plot_rho_fitting_comparison(
     log_y: bool = True,
     ax: Optional[plt.Axes] = None,
     show: bool = True,
+    rho_obs_no_shift: Optional[np.ndarray] = None,
 ) -> plt.Axes:
     """Four-line ρ_a comparison at one station: true / obs / OT pred / MSE pred."""
     apply_plot_style()
@@ -51,8 +52,11 @@ def plot_rho_fitting_comparison(
     rho_o = _slice(rho_obs)
     rho_ot = _slice(rho_pred_ot)
     rho_mse = _slice(rho_pred_mse)
+    rho_o_no_shift = _slice(rho_obs_no_shift) if rho_obs_no_shift is not None else None
 
     ax.plot(freqs, rho_t, "k-", lw=2, label="True")
+    if rho_o_no_shift is not None:
+        ax.plot(freqs, rho_o_no_shift, "C3--", lw=1.5, label="Observed (before shift)")
     ax.plot(freqs, rho_o, "C2o", lw=1.5, label="Observed")
     ax.plot(freqs, rho_ot, "C0-", lw=2, label="OT inverted")
     ax.plot(freqs, rho_mse, "C1-", lw=2, label="MSE inverted")
@@ -90,10 +94,12 @@ def plot_rho_fitting_from_npz(
     d_mse = np.load(npz_mse)
     _, true_key, obs_key = _component_keys(mode)
     pred_key = f"pred_{_component_keys(mode)[0]}"
+    obs_no_shift_key = f"obs_no_shift_{obs_key[4:]}"
     station_label = kwargs.pop("station_label", None)
     if station_label is None and "stations" in d_ot:
         st_km = float(np.asarray(d_ot["stations"]).reshape(-1)[station_idx]) / 1000.0
         station_label = f"S{station_idx + 1} ({st_km:.1f} km)"
+    rho_obs_no_shift = d_ot[obs_no_shift_key] if obs_no_shift_key in d_ot else None
     return plot_rho_fitting_comparison(
         freqs=d_ot["freqs"],
         rho_true=d_ot[true_key],
@@ -103,6 +109,7 @@ def plot_rho_fitting_from_npz(
         station_idx=station_idx,
         station_label=station_label,
         mode=mode,
+        rho_obs_no_shift=rho_obs_no_shift,
         **kwargs,
     )
 
@@ -129,6 +136,7 @@ def plot_rho_fitting_from_single_npz(
 
     rho_true = _col(true_key)
     rho_obs = _col(obs_key)
+    obs_no_shift_key = f"obs_no_shift_{obs_key[4:]}"
     created_ax = kwargs.pop("ax", None)
     if include_pred and pred_key in d:
         rho_pred = _col(pred_key)
@@ -138,6 +146,7 @@ def plot_rho_fitting_from_single_npz(
         rho_ot = rho_obs
         rho_mse = rho_obs
 
+    rho_obs_no_shift = _col(obs_no_shift_key) if obs_no_shift_key in d else None
     return plot_rho_fitting_comparison(
         freqs=freqs,
         rho_true=rho_true,
@@ -147,5 +156,6 @@ def plot_rho_fitting_from_single_npz(
         station_idx=station_idx,
         mode=mode,
         ax=created_ax,
+        rho_obs_no_shift=rho_obs_no_shift,
         **kwargs,
     )
