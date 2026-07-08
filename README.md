@@ -1,231 +1,307 @@
-## MTinv_OT: MT 1D/2D Inversion and Forward Modelling with Optimal Transport (OT)
+# MTinv_OT
 
-MTinv_OT is a Python research toolbox for magnetotelluric (MT) problems. The core idea:
+基于最优传输（Optimal Transport, OT）的 MT 1D/2D 反演与正演研究工具箱。
 
-> Within the traditional MT inversion framework, replace or supplement classical L2 data misfit with geometric Optimal Transport (OT) distance (geomloss Sinkhorn operator) for more robust fitting under noise and non-Gaussian errors.
+> 在传统 MT 反演框架中，以 geomloss Sinkhorn 几何 OT 距离替代/补充经典 L2 数据拟合，提升对噪声与非高斯误差的鲁棒性。
 
-Features:
-
-- **MT 1D OT inversion**: Embed apparent resistivity and phase into 3D point cloud (logρ, normalized phase, logf) with geomloss `SamplesLoss(loss="sinkhorn")`, plus Occam smoothness, reference model constraints, and adaptive regularization.
-- **MT 2D finite-difference forward**: TE/TM total-field 2D FD forward operator as a differentiable front-end for 2D OT inversion.
-- **MT 2D experimental OT inversion**: Embed multi-frequency, multi-station, four-component (ρ/φ) observations in 3D/6D OT space for joint fitting with Sinkhorn distance and depth-weighted roughness.
-- **1D/2D regularization and diagnostics**: Roughness/curvature matrices, χ² statistics, adaptive λ, gradient history, and visualizations.
-
-Modules are implemented in PyTorch and geomloss, run on CPU or GPU, and are designed for integration with deep learning, joint inversion, and other physics constraints.
-
----
-
-## Overview
-
-### 1. MT 1D Inversion (mt1d_inv)
-
-Key files:
-
-- [src/mt1d_inv/MTinv.py](src/mt1d_inv/MTinv.py): Main inverter `MT1DInverter`
-- [src/mt1d_inv/model.py](src/mt1d_inv/model.py): 1D geo-electric model `MT1D`
-- [src/mt1d_inv/constraints.py](src/mt1d_inv/constraints.py): Roughness/curvature constraints
-- [src/mt1d_inv/optimizer.py](src/mt1d_inv/optimizer.py): Optimizer and loss setup
-
-Features: 1D MT forward and inversion, OT data misfit with geomloss Sinkhorn, Occam constraints, reference model, adaptive λ, error propagation and weighting, χ² diagnostics and plots.
-
-### 2. MT 2D Forward (mt2d_inv)
-
-Key files:
-
-- [src/mt2d_inv/MT2D.py](src/mt2d_inv/MT2D.py): 2D FD forward `MT2DFD_Torch`
-- [src/mt2d_inv/constraints.py](src/mt2d_inv/constraints.py): 2D smoothness constraints
-
-Features: Total-field TE/TM 2D MT forward, complex FD, PyTorch auto-diff, real-block solve, 1D background for boundary conditions.
-
-### 3. MT 2D Inversion (Experimental, OT-based)
-
-Key file: [src/mt2d_inv/MTinv_2d.py](src/mt2d_inv/MTinv_2d.py): `MT2DInverter`
-
-Features: TE/TM joint inversion, 3D/6D Sinkhorn OT, mode switch (`3dot`/`6dot`/`mse`), error propagation and χ², depth-weighted roughness, reference model, adaptive λ, diagnostics.
-
----
-
-## Environment and Dependencies
-
-- Python ≥ 3.10
-- PyTorch (CPU or GPU)
-- numpy, matplotlib
-- Optional: **geomloss** for Sinkhorn OT
-
-```bash
-pip install torch numpy matplotlib
-pip install geomloss  # for Sinkhorn OT
-```
-
----
-
-## Installation and Import
-
-Clone the repo and add `src` to the Python path:
-
-```python
-import sys, os
-project_root = os.path.dirname(__file__)
-sys.path.append(os.path.join(project_root, "src"))
-
-from mt1d_inv import MT1D, MT1DInverter
-from mt2d_inv.MT2D import MT2DFD_Torch
-```
-
-Or use `pip install -e .[ot,dev]` with [setup.py](setup.py).
-
----
-
-## Quick Start: MT 1D Synthetic Example
-
-```python
-import os, sys
-import torch
-import numpy as np
-project_root = os.path.dirname(__file__)
-sys.path.append(os.path.join(project_root, "src"))
-from mt1d_inv import MT1D, MT1DInverter
-
-def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    true_dz = torch.tensor([50.0, 100.0, 200.0], dtype=torch.float32)
-    true_sig = torch.tensor([0.01, 0.1, 0.01, 0.001], dtype=torch.float32)
-
-    inv = MT1DInverter(device=device, use_sinkhorn=True, sinkhorn_dim=3, use_data_weighting=True)
-    inv.generate_synthetic_data(true_dz=true_dz, true_sig=true_sig, freq_range=(-1, 4), n_freq=60, noise_level=0.05, seed=2025)
-    inv.initialize_model(n_layers=true_sig.numel(), total_depth=float(true_dz.sum()), initial_sig=0.01, thickness_mode="equal")
-    inv.setup_optimizer(lr=3e-3, reg_weight_sig=1e-4, optimizer_type="AdamW", p=2)
-    inv.setup_constraints(constraint_type="roughness", use_occam_constraint=True, ref_weight=0.0, reference_sig=None)
-    loss_history = inv.run_inversion(num_epochs=800, print_interval=50, use_adaptive_lambda=True, current_lambda=1e-4, warmup_epochs=50, update_interval=20)
-    inv.plot_data_fit()
-    inv.plot_model_comparison()
-
-if __name__ == "__main__":
-    main()
-```
-
----
-
-## Simple MT 2D Forward Example
-
-```python
-import numpy as np, torch
-from mt2d_inv.MT2D import MT2DFD_Torch
-
-zn = np.linspace(0, 2000, 41)
-yn = np.linspace(-1000, 1000, 81)
-nz, ny = len(zn) - 1, len(yn) - 1
-sig = np.ones((nz, ny)) * 0.01
-freq = np.logspace(-1, 3, 10)
-ry = np.linspace(-500, 500, 21)
-model = MT2DFD_Torch(nza=0, zn=zn, yn=yn, freq=freq, ry=ry, sig=sig, device="cpu")
-result = model(mode="TETM")
-rhoxy = result["rhoxy"].detach().cpu().numpy()
-```
-
----
-
-## Tests and Notebooks
-
-Example Jupyter notebooks are in the `tests` directory. From the project root, run:
-
-```bash
-pip install -e .
-pip install geomloss jupyter   # for OT and notebooks
-```
-
-Or in one command: `pip install -e ".[ot,dev]"`. Then open and run:
-
-- [tests/test_mt1d/example_1d.ipynb](tests/test_mt1d/example_1d.ipynb) — 1D L2 + OT inversion
-- [tests/test_mt2d/example_simple.ipynb](tests/test_mt2d/example_simple.ipynb) — 2D single-anomaly MSE vs OT
-- [tests/test_mt2d/test_three_block.ipynb](tests/test_mt2d/test_three_block.ipynb) — 2D three-block MSE vs OT
-- [tests/test_mt2d/test_CM2D-0.ipynb](tests/test_mt2d/test_CM2D-0.ipynb) — 2D CM2D-0 forward benchmark
-
----
-
-## Contributors
-
-- Authors: Xinran Liu, Xuanzhang Chen, Bo Yang, Ziyu Tang
-- Contact: xinran.liu@zju.edu.cn, bo.yang@zju.edu.cn
-
----
-
-## License
-
-See [LICENSE](LICENSE) in the repository root.
-
----
----
-
-## MTinv_OT：基于最优传输（OT）的 MT 1D/2D 反演与正演工具箱
-
-MTinv_OT 是一个专门面向大地电磁（Magnetotelluric, MT）问题的 Python 研究型工具箱，核心思想是：
-
-> 在传统 MT 反演框架中，以几何最优传输（Optimal Transport, OT）距离（基于 geomloss 的 Sinkhorn 算子）替代/补充经典的 L2 数据拟合差，从而获得对噪声与非高斯误差更鲁棒的拟合方式。
-
-围绕这一思想，工具箱实现了：
-
-- **MT 1D OT 反演**：在一维分层模型中，将视电阻率与相位数据嵌入 3D 点云（logρ、归一化相位、logf）空间，借助 geomloss 的 `SamplesLoss(loss="sinkhorn")` 作为数据项，并联合 Occam 平滑约束、参考模型约束与自适应正则化权重；
-- **MT 2D 有限差分正演**：TE/TM 总场法的二维有限差分正演算子，作为 2D OT 反演的“可微分前端”；
-- **MT 2D 实验性 OT 反演**：将多频率、多台站、四分量（ρ/φ）的观测嵌入 3D/6D OT 空间，使用 Sinkhorn 距离实现多分量联合拟合，并叠加深度加权粗糙度与参考模型等约束；
-- **一维/二维正则化与诊断工具**：粗糙度/曲率矩阵、χ² 统计、自适应 λ 更新、梯度历史与多种反演过程可视化。
-
-所有模块基于 PyTorch 与 geomloss 实现，可在 CPU 或 GPU 上运行，便于与深度学习、联合反演或其他物理约束模型进行集成与对比实验。
+**仓库**: [https://github.com/MTinv-OT/MTinv_OT](https://github.com/MTinv-OT/MTinv_OT)
 
 ---
 
 ## 功能概览
 
-### 1. MT 1D 反演（mt1d_inv）
+| 模块 | 说明 |
+|------|------|
+| **MT 1D OT 反演** (`mt1d_inv`) | 一维分层模型；视电阻率/相位嵌入 3D 点云；Sinkhorn OT + Occam 约束 |
+| **MT 2D FD 正演** (`mt2d_inv.forward`) | TE/TM 总场法有限差分；PyTorch 可微；real-block 求解 |
+| **MT 2D OT 反演** (`mt2d_inv.inversion`) | 多频、多台站、四分量联合反演；3D/6D Sinkhorn OT；MSE 对比模式 |
+| **数据准备** (`mt2d_inv.data_prep`) | EDI 读取、strike 估计、剖面投影、数据清洗与导出 |
+| **实验 I/O** (`mt2d_inv.io`) | `ExperimentLogger` 统一保存 config / history / figures / metrics |
+| **绘图** (`mt2d_inv.plotting`) | 模型对比、数据拟合、伪剖面、OT vs MSE 收敛对比 |
 
-核心文件：[src/mt1d_inv/MTinv.py](src/mt1d_inv/MTinv.py)、[model.py](src/mt1d_inv/model.py)、[constraints.py](src/mt1d_inv/constraints.py)、[optimizer.py](src/mt1d_inv/optimizer.py)
+---
 
-主要特性：一维 MT 正反演；基于 geomloss 的 OT 数据拟合差；Occam 约束；参考模型约束；自适应正则化；误差传播与加权；完整诊断与可视化。
+## 代码结构
 
-### 2. MT 2D 正演（mt2d_inv）
+重构后的 `mt2d_inv` 采用 **Mixin 组合**，替代原先单文件 `MTinv_2d.py`：
 
-核心文件：[src/mt2d_inv/MT2D.py](src/mt2d_inv/MT2D.py)、[constraints.py](src/mt2d_inv/constraints.py)
+```
+src/
+├── mt1d_inv/                    # 1D 反演
+│   ├── MTinv.py                 # MT1DInverter
+│   ├── model.py, constraints.py, optimizer.py
+│   └── visualize.py
+│
+└── mt2d_inv/
+    ├── __init__.py              # 公开 API 入口
+    ├── models.py                # MT2DTrueModels（COMMEMI、Rubic 等标准模型）
+    ├── constraints.py           # 2D 平滑/粗糙度约束
+    ├── optimizer.py             # OptimizerConfig
+    │
+    ├── forward/
+    │   └── solver.py            # MT2DFD_Torch（2D 有限差分正演）
+    │
+    ├── inversion/               # 2D 反演核心（Mixin 组合）
+    │   ├── base.py              # MT2DInverter
+    │   ├── weighted_cost.py     # MT2DInverterWeightedCost
+    │   ├── data.py              # 合成/观测数据、静位移、误差传播
+    │   ├── ot.py                # Sinkhorn OT 数据项
+    │   ├── regularization.py    # 正则化与自适应 λ
+    │   └── metrics.py           # 恢复率 RMSE / SSIM / correlation
+    │
+    ├── data_prep/               # 实测数据准备流水线
+    │   ├── prepare.py           # PrepareData（主入口）
+    │   ├── edi.py               # EDI 解析与阻抗变换
+    │   ├── strike.py            # Strike 估计与剖面投影
+    │   ├── cleaning.py          # 数据清洗
+    │   ├── export.py            # 反演张量导出
+    │   └── grid.py              # 网格范围计算
+    │
+    ├── plotting/                # 反演结果可视化
+    │   ├── inversion.py         # 模型对比、数据拟合、剖面等
+    │   ├── pseudosection.py     # 视电阻率伪剖面
+    │   ├── comparison.py        # OT vs MSE 收敛对比
+    │   └── prepare_data.py      # 数据准备阶段绘图
+    │
+    └── io/
+        └── experiment.py        # ExperimentLogger
+```
 
-主要特性：总场法 TE/TM 二维正演；PyTorch 自动求导；real-block 求解；1D 背景场边界条件。
+### 主要公开 API
 
-### 3. MT 2D 反演（实验性）
-
-核心文件：[src/mt2d_inv/MTinv_2d.py](src/mt2d_inv/MTinv_2d.py)
-
-主要特性：TE/TM 全分量联合反演；3D/6D Sinkhorn OT；OT/MSE 模式切换；误差传播与 χ²；加权粗糙度与参考模型；自适应 λ；诊断可视化。
+```python
+from mt2d_inv import MT2DInverter, MT2DInverterWeightedCost, MT2DFD_Torch, MT2DTrueModels
+from mt2d_inv.data_prep import PrepareData
+from mt2d_inv.io import ExperimentLogger
+from mt2d_inv.plotting import (
+    plot_model_comparison,
+    plot_data_fitting,
+    plot_ot_mse_convergence,
+    plot_ot_mse_pseudosection_from_npz,
+)
+```
 
 ---
 
 ## 环境与依赖
 
-Python ≥ 3.8，PyTorch，numpy，matplotlib；可选 geomloss（用于 Sinkhorn OT）。
+- Python ≥ 3.10
+- PyTorch（CPU 或 GPU）
+- numpy, matplotlib, scikit-image, pandas
+
+```bash
+pip install -e ".[ot,dev]"
+# 或分步安装
+pip install -e .
+pip install geomloss jupyter   # OT 反演与 notebook 实验
+```
+
+Windows 上若遇 OpenMP 冲突，可设置：
+
+```bash
+set KMP_DUPLICATE_LIB_OK=TRUE
+```
 
 ---
 
 ## 安装与导入
 
-克隆后，将 `src` 加入 Python 路径；或使用 `pip install -e .`。
+```bash
+git clone https://github.com/MTinv-OT/MTinv_OT.git
+cd MTinv_OT
+pip install -e ".[ot,dev]"
+```
+
+Notebook 中若不在项目根目录运行，需将 `src` 加入路径：
+
+```python
+import sys
+from pathlib import Path
+
+def find_project_root(start: Path) -> Path:
+    for p in [start, *start.parents]:
+        if (p / "src" / "mt2d_inv" / "__init__.py").is_file():
+            return p
+    raise RuntimeError("Cannot find project root")
+
+root = find_project_root(Path.cwd())
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+```
 
 ---
 
-## 快速上手、2D 正演与反演示例
+## 快速上手
 
-参见上方英文版对应章节，代码逻辑相同。
+### 2D 合成数据反演（OT vs MSE）
+
+```python
+import torch
+from mt2d_inv import MT2DInverterWeightedCost, MT2DTrueModels
+from mt2d_inv.io import ExperimentLogger
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+yn, zn, nza, sig_true = MT2DTrueModels.create_commemi_2d4(nza=10, device=device)
+freqs = torch.logspace(0, -5, 30, device=device)
+stations = torch.linspace(-15000, 15000, 21, device=device)
+
+inv = MT2DInverterWeightedCost(
+    yn=torch.tensor(yn, dtype=torch.float64, device=device),
+    zn=torch.tensor(zn, dtype=torch.float64, device=device),
+    nza=nza, freqs=freqs, stations=stations,
+    device=device, random_seed=123,
+)
+inv.set_forward_operator()
+inv.sig_true = sig_true
+inv.create_synthetic_data(noise_level=0.01, noise_type="gaussian")
+inv.initialize_model(initial_sigma=0.01)
+
+inv.run_inversion(n_epochs=300, mode="6dot")   # OT
+logger = ExperimentLogger(model_tag="demo", output_root="test_results")
+logger.save_from_inverter(inv, run_name="ot_demo")
+```
+
+### 实测数据准备（EDI → 反演张量）
+
+```python
+from mt2d_inv.data_prep import PrepareData
+
+prep = PrepareData(
+    edi_dir="path/to/edi",
+    n_freq_target=20,
+    freq_min_hz=1e-4,
+    freq_max_hz=1e4,
+)
+prep.run_all_simple(rotate=True, strike_true_deg=45.0)
+data_dict = prep.export_data_dict_for_2d_inversion()
+```
+
+### 静位移（Static Shift）
+
+合成数据支持两种静位移施加方式：
+
+**1. 随机模式（原有接口）**
+
+```python
+inv.create_synthetic_data(
+    noise_level=0.01,
+    static_shift_std=0.15,          # log10 乘子的标准差 σ（非方差）
+    shift_modes=("xy", "yx"),       # xy=TE, yx=TM
+    shift_stations="random",        # "all" | "middle" | "random"
+    shift_ratio=0.2,                # 受影响台站比例
+)
+```
+
+**2. 固定强度模式（新接口）**
+
+```python
+inv.create_synthetic_data(
+    noise_level=0.01,
+    static_shift_std=0.0,
+    shift_station_indices=[8, 9, 10, 11],   # 0-based 台站序号
+    static_shift_log={
+        "xy": 0.15,    # TE：直接 log10 乘子（×10^0.15 ≈ 1.41）
+        "yx": 0.15,    # TM：同上；可分别设置或只设其中一个
+    },
+)
+```
+
+| 参数 | 含义 |
+|------|------|
+| `static_shift_std` | 随机模式：log10 乘子的高斯 **标准差** σ |
+| `static_shift_log` | 固定模式：**直接的 log10 乘子**（非方差、非标准差） |
+| `shift_station_indices` | 显式指定受影响台站，优先级高于 `shift_stations` |
+
+静位移配置与系数会写入 `static_shift.json`，恢复率指标（含 SSIM）写入 `summary.csv`。
 
 ---
 
-## 测试与示例 Notebook
+## 实验 Notebook
 
-`tests` 目录下提供 Jupyter Notebook 示例。在项目根目录执行 `pip install -e .` 及 `pip install geomloss jupyter` 后，可直接打开并运行 `tests/test_mt1d/example_1d.ipynb`、`tests/test_mt2d/example_simple.ipynb`、`tests/test_mt2d/test_three_block.ipynb` 与 `tests/test_mt2d/test_CM2D-0.ipynb`。
+`tests/` 目录按实验类型组织：
+
+### 合成数据实验 — `tests/synthetic/`
+
+COMMEMI 2D-1 / 2D-4 与 Rubic 模型；OT（6dot）与 MSE 对比；随机静位移。
+
+| Notebook | 模型 | 静位移 |
+|----------|------|--------|
+| `commemi_2d1_21_shift*.ipynb` | COMMEMI 2D-1, 21 台站 | 随机（`shift_ratio` = 0 / 0.1 / 0.15 / 0.2） |
+| `commemi_2d4_21_shift*.ipynb` | COMMEMI 2D-4, 21 台站 | 同上 |
+| `rubic_ot_21.ipynb` / `rubic_mse_21.ipynb` | Rubic, 21 台站 | 随机 |
+| `rubic_ot_31.ipynb` / `rubic_mse_31.ipynb` | Rubic, 31 台站 | 随机 |
+
+### 固定静位移对比 — `tests/synthetic/shift_compare/`
+
+使用新接口 `static_shift_log`，对比 TE/TM 静位移影响（COMMEMI 2D-1 与 2D-4 各 3 种场景）：
+
+| Notebook | 场景 |
+|----------|------|
+| `*_static_te_only.ipynb` | 仅 TE (xy) 有静位移 |
+| `*_static_tm_only.ipynb` | 仅 TM (yx) 有静位移 |
+| `*_static_both_same.ipynb` | TE 与 TM 相同固定静位移 |
+
+### 实测数据实验
+
+| 目录 | 说明 |
+|------|------|
+| `tests/AKBST-AMT-L08/` | AKBST AMT 剖面数据；MSE / TE5 OT 反演 |
+| `tests/Cascadia/` | Cascadia 剖面数据；6dot TE/TM 权重对比 |
+
+### 实验结果目录结构
+
+`ExperimentLogger` 每次运行生成：
+
+```
+test_results/<model_tag>/<timestamp>_<run_name>/
+├── config.json              # 反演与静位移配置
+├── summary.csv              # RMSE, SSIM, misfit, timing 等
+├── history.csv              # 逐 epoch 损失历史
+├── static_shift.json        # 静位移参数与实际系数
+├── apparent_resistivity.npz # 各频点 ρ/φ（供伪剖面重绘）
+├── final_model.npz
+└── figures/
+    ├── model_comparison.png
+    ├── data_fitting/
+    └── ...
+```
 
 ---
 
-## 贡献与致谢
+## 绘图函数速查
 
-- 作者：lxr, cxz
-- 联系方式：xinran.liu@zju.edu.cn
+| 函数 | 用途 |
+|------|------|
+| `plot_model_comparison(inv)` | 真/反演模型 log10(ρ) 对比；含 SSIM 打印 |
+| `plot_data_fitting(inv, station_indices=...)` | 台站数据拟合曲线 |
+| `plot_ot_mse_convergence(hist_ot, hist_mse)` | OT vs MSE 收敛对比 |
+| `plot_ot_mse_pseudosection_from_npz(npz_ot, npz_mse)` | 伪剖面对比（共享/独立色标） |
+| `plot_rho_fitting_from_npz(npz_path)` | 从保存的 npz 重绘数据拟合 |
 
-欢迎在此基础上扩展更多功能或集成到更大的 MT 处理工作流中。
+SSIM 指标：`inv.compute_recovery_rate()['ssim']` 与 `plot_model_comparison` 打印值一致（log10(ρ) 域，排除空气层），并写入 `summary.csv`。
+
+---
+
+## MT 1D 反演
+
+1D 模块保持独立，入口为 `mt1d_inv`：
+
+```python
+from mt1d_inv import MT1D, MT1DInverter
+
+inv = MT1DInverter(device="cuda", use_sinkhorn=True)
+inv.generate_synthetic_data(true_dz=..., true_sig=..., noise_level=0.05)
+inv.run_inversion(num_epochs=800, use_adaptive_lambda=True)
+inv.plot_data_fit()
+inv.plot_model_comparison()
+```
+
+---
+
+## 贡献者
+
+- 作者：Xinran Liu, Xuanzhang Chen, Bo Yang, Ziyu Tang
+- 联系：xinran.liu@zju.edu.cn, bo.yang@zju.edu.cn
 
 ---
 
