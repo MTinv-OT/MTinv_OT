@@ -80,9 +80,20 @@ def plot_model_comparison(
             sigma_true = inv.sig_true.detach().cpu().numpy()
             try:
                 if sigma_true.shape == sigma_inv.shape:
-                    data_range = np.log10(sigma_true.max()) - np.log10(sigma_true.min())
-                    score = ssim(np.log10(sigma_true), np.log10(sigma_inv), data_range=data_range, win_size=3)
-                    print(f"Model structural similarity (SSIM): {score:.4f}")
+                    eps_ssim = 1e-12
+                    # Match compute_recovery_rate(): SSIM on log10(ρ), earth only (mask air).
+                    zc_ssim = 0.5 * (inv.zn[:-1] + inv.zn[1:])
+                    earth_mask = zc_ssim >= 0
+                    if torch.is_tensor(zc_ssim):
+                        earth_mask = earth_mask.cpu().numpy()
+                    rho_true = 1.0 / (sigma_true[earth_mask] + eps_ssim)
+                    rho_inv = 1.0 / (sigma_inv[earth_mask] + eps_ssim)
+                    log_rho_true = np.log10(rho_true)
+                    log_rho_inv = np.log10(rho_inv)
+                    data_range = log_rho_true.max() - log_rho_true.min()
+                    if data_range > eps_ssim:
+                        score = ssim(log_rho_inv, log_rho_true, data_range=data_range)
+                        print(f"Model structural similarity (SSIM): {score:.4f}")
             except Exception:
                 pass
         eps = 1e-12

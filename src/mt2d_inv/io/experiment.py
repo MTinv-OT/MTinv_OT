@@ -184,9 +184,12 @@ class ExperimentLogger:
             "n_shift_stations": getattr(inv, "n_shift_stations", len(shift_ids)),
             "shift_fraction_actual": getattr(inv, "shift_fraction_actual", None),
             "shift_station_indices": shift_ids,
+            "requested_shift_station_indices": getattr(inv, "shift_station_indices", None),
             "shift_station_positions_m": None,
             "shift_factors": {},
             "shift_log10": {},
+            # 如果使用了固定强度接口，这里会记录用户传入的规格
+            "static_shift_log_input": None,
         }
 
         if hasattr(inv, "stations") and shift_ids:
@@ -202,6 +205,11 @@ class ExperimentLogger:
                 info["shift_factors"][mode] = self._to_serializable(factors[mode])
             if mode in logs:
                 info["shift_log10"][mode] = self._to_serializable(logs[mode])
+
+        # 记录固定静位移输入规格（如果有）
+        fixed_in = getattr(inv, "static_shift_log_input", None)
+        if fixed_in is not None:
+            info["static_shift_log_input"] = self._to_serializable(fixed_in)
 
         return info
 
