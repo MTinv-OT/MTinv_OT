@@ -223,31 +223,40 @@ class InversionDataMixin:
                 actual_affected = actual_affected | nonzero
 
             Zabs = torch.abs(Z)
-
+            Zabs_base = torch.abs(Z_base)
             # -------- Impedance noise (relative) --------
             delta = noise_level * Zabs
+            delta_base = noise_level * Zabs_base
 
+            # --- 1. 生成 Z_obs 专用的噪声 (随静位移变化) ---
             if noise_type == "student_t":
-                # Student-t: heavy tails, direct non-Gaussian. Scale to match variance ~ delta^2.
-                # Var(StudentT(df, scale=s)) = df/(df-2) * s^2, so s = delta * sqrt((df-2)/df)
                 scale = delta * np.sqrt((student_t_df - 2) / student_t_df)
                 dist = torch.distributions.StudentT(df=student_t_df, loc=0.0, scale=scale)
-                noise_real = dist.sample(Z.real.shape).to(self.device, dtype=torch.float64)
-                noise_imag = dist.sample(Z.imag.shape).to(self.device, dtype=torch.float64)
+                noise_real_obs = dist.sample(Z.real.shape).to(self.device, dtype=torch.float64)
+                noise_imag_obs = dist.sample(Z.imag.shape).to(self.device, dtype=torch.float64)
             else:
-                # Gaussian baseline
-                noise_real = torch.randn_like(Z.real) * delta
-                noise_imag = torch.randn_like(Z.imag) * delta
+                noise_real_obs = torch.randn_like(Z.real) * delta
+                noise_imag_obs = torch.randn_like(Z.imag) * delta
 
+            # --- 2. 生成 Z_obs_no_shift 专用的噪声 (仅由原始模型决定) ---
+            if noise_type == "student_t":
+                scale_base = delta_base * np.sqrt((student_t_df - 2) / student_t_df)
+                dist_base = torch.distributions.StudentT(df=student_t_df, loc=0.0, scale=scale_base)
+                noise_real_base = dist_base.sample(Z_base.real.shape).to(self.device, dtype=torch.float64)
+                noise_imag_base = dist_base.sample(Z_base.imag.shape).to(self.device, dtype=torch.float64)
+            else:
+                noise_real_base = torch.randn_like(Z_base.real) * delta_base
+                noise_imag_base = torch.randn_like(Z_base.imag) * delta_base
+
+            # --- 3. 叠加噪声 ---
             Z_obs_no_shift = torch.complex(
-                Z_base.real + noise_real,
-                Z_base.imag + noise_imag
+                Z_base.real + noise_real_base,
+                Z_base.imag + noise_imag_base
             )
             Z_obs = torch.complex(
-                Z.real + noise_real,
-                Z.imag + noise_imag
+                Z.real + noise_real_obs,
+                Z.imag + noise_imag_obs
             )
-
             # -------- Non-Gaussian: add outliers on a subset of points (gaussian + outliers) --------
             if noise_type == "nongaussian":
                 n_tot = Z_obs.numel()

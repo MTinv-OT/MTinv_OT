@@ -1,0 +1,24 @@
+{
+  "model_tag": "test",
+  "run_name": "mse21_1_both_same_te1",
+  "timestamp": "2026-07-09_17-26-06",
+  "mode": "mse",
+  "ot_config": {
+    "p": 2,
+    "blur": 0.01,
+    "scaling": 0.9,
+    "reach": null,
+    "sigma_min": 0.03,
+    "sigma_6d": null
+  },
+  "cost_weights": {
+    "w_s": 1.0,
+    "w_f": 1.0,
+    "w_d": {
+      "rhoxy": 1.0,
+      "phsxy": 1.0,
+      "rhoyx": 1.0,
+      "phsyx": 1.0
+    }
+  }
+}

@@ -455,7 +455,6 @@ class MT2DInverter(
                     depth_beta: float = 0.3,
                     rms_chi2_stop: float = 1.05,
                     monitor_ot_distance: bool = True,
-                    ot_distance_interval: Optional[int] = None,
                     profile_timing: bool = False,
                     # --- Blur (epsilon) annealing (opt-in, default disabled) ---
                     enable_blur_anneal: bool = False,
@@ -669,17 +668,9 @@ class MT2DInverter(
                 torch.cuda.synchronize()
 
         # Optional display-only OT distance monitor (never used by optimization/early-stop).
-        if ot_distance_interval is None:
-            ot_interval_eff = max(int(progress_interval), 1)
-        else:
-            ot_interval_eff = max(int(ot_distance_interval), 1)
-
         cloud_obs_ot_monitor = None
         if monitor_ot_distance:
-            if self.sinkhorn_loss is None:
-                print("[OT-distance monitor] sinkhorn_loss is None; OT distance will be NaN.")
-            else:
-                cloud_obs_ot_monitor = self._prepare_6d_ot_cloud_obs(self.obs_data)
+            cloud_obs_ot_monitor = self._prepare_6d_ot_cloud_obs(self.obs_data)
 
         profile_times = {
             "forward": [],
@@ -766,7 +757,7 @@ class MT2DInverter(
                     if cloud_obs_ot_monitor is None:
                         cloud_obs_ot_monitor = self._prepare_6d_ot_cloud_obs(self.obs_data)
                     cloud_pred_ot = _prepare_6d_cloud_pred_cached(pred_dict)
-                    ot_distance_metric = float(self.sinkhorn_loss(cloud_pred_ot, cloud_obs_ot_monitor).item()) * data_loss_scale
+                    ot_distance_metric = float(self.sinkhorn_loss(cloud_pred_ot, cloud_obs_ot_monitor).item()) * 1000
             
             if profile_timing:
                 _sync()
@@ -1188,7 +1179,6 @@ class MT2DInverter(
         "depth_beta": depth_beta,
         "rms_chi2_stop": rms_chi2_stop,
         "monitor_ot_distance": monitor_ot_distance,
-        "ot_distance_interval": ot_distance_interval,
         "profile_timing": profile_timing,
         "enable_blur_anneal": enable_blur_anneal,
         "blur_anneal_window": blur_anneal_window,

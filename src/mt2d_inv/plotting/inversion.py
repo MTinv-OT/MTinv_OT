@@ -12,12 +12,46 @@ from skimage.metrics import structural_similarity as ssim
 
 from ._style import apply_plot_style
 
+def _ylim_snap_to_mesh_bottom(zn, ylim: list, ylim_auto: bool = True) -> list:
+    """Snap depth-axis bottom to the outer edge of the deepest visible mesh row.
+
+    When ylim cuts between log-spaced cell centers (e.g. 50 km between centers at
+    ~44 km and ~51 km), pcolormesh leaves empty margin above the axis. This snaps
+    the bottom limit to the lower edge of the last row inside ylim.
+    """
+    if not ylim_auto or ylim is None:
+        return list(ylim) if ylim is not None else [50, 0]
+    ylim_out = list(ylim)
+    y_cap = max(ylim_out)
+
+    zn_np = zn.detach().cpu().numpy() if torch.is_tensor(zn) else np.asarray(zn)
+    zn_km = zn_np.astype(float) * 0.001
+    zc = 0.5 * (zn_km[:-1] + zn_km[1:])
+    zc_ground = zc[zc >= 0]
+    if zc_ground.size == 0:
+        return ylim_out
+
+    zc_visible = zc_ground[zc_ground <= y_cap]
+    if zc_visible.size == 0:
+        return ylim_out
+
+    idx = int(np.where(zc_ground == zc_visible[-1])[0][0])
+    if idx + 1 < zc_ground.size:
+        mesh_bottom = float(zc_ground[idx] + 0.5 * (zc_ground[idx + 1] - zc_ground[idx]))
+    else:
+        mesh_bottom = float(zn_km.max())
+
+    if y_cap > mesh_bottom:
+        ylim_out[0] = mesh_bottom
+    return ylim_out
+
 
 def plot_model_comparison(
             inv,
             cmap: str = "jet_r",
             xlim: list = [-20, 20],     # X-axis bounds (ignored when clip_to_stations=True)
             ylim: list = [50, 0],      # Y-axis bounds
+            ylim_auto: bool = True,
             clip_to_stations: bool = False,
             profile_extend_km: float = 5.0,
             profile_axis_width_km: float = None,
@@ -40,6 +74,8 @@ def plot_model_comparison(
             x-axis to [0, width] km (left = st_min - profile_extend_km in physical coords).
             Default None uses (st_max - st_min) + 2 * profile_extend_km.
 
+        ylim_auto: If True (default), shrink the depth-axis bottom to the mesh extent so
+            no empty margin appears below the model (paper-ready layout).
         vmin/vmax: Optional color scale limits for the plotted quantity (log10 resistivity).
             - If provided, both true/inverted panels (if present) use the same limits.
             - If omitted (None), auto-scale using masked min/max ± 0.5 (current behavior).
@@ -113,7 +149,8 @@ def plot_model_comparison(
             YY_plot = YY
             st_x_plot = st_km
         mask_air = ZZ < 0
-       
+        ylim = _ylim_snap_to_mesh_bottom(inv.zn, ylim, ylim_auto=ylim_auto)
+
         # -------- Build view mask (based on xlim_orig/ylim; YY in original coords) --------
         mask_x_min, mask_x_max = min(xlim_orig), max(xlim_orig)
         y_bottom, y_top = max(ylim), min(ylim)
@@ -259,7 +296,6 @@ def plot_model_comparison(
         plt.show()
         return fig
 
-
 def plot_initial_model(
             inv,
             cmap: str = "jet_r",
@@ -324,9 +360,7 @@ def plot_initial_model(
         zc = 0.001 * 0.5 * (inv.zn[:-1] + inv.zn[1:])
         yc = 0.001 * 0.5 * (inv.yn[:-1] + inv.yn[1:])
         YY, ZZ = np.meshgrid(yc.cpu().numpy(), zc.cpu().numpy())
-        z_max_km = float(ZZ[ZZ >= 0].max()) if np.any(ZZ >= 0) else 10.0
-        if ylim_auto and max(ylim) > z_max_km:
-            ylim = [min(ylim[0], z_max_km * 1.05), ylim[1]]
+        ylim = _ylim_snap_to_mesh_bottom(inv.zn, ylim, ylim_auto=ylim_auto)
         if use_profile:
             YY_plot = YY - offset_km
             st_x_plot = st_km - offset_km
@@ -386,7 +420,6 @@ def plot_initial_model(
             plt.show()
             return None
         return fig
-
 
 def plot_loss_history(inv, target_misfit: float = 1.0, plot_roughness_vs_misfit: bool = False):
         """
@@ -635,6 +668,7 @@ def plot_sensitivity(inv, xlim=None, ylim=None, cmap: str = "viridis", clip_to_s
         plt.show()
 
 
+
 def plot_data_fitting(
         inv,
         station_indices=None,
@@ -642,233 +676,137 @@ def plot_data_fitting(
         stations_per_figure: int = 3,
         plot_noise_cap: Optional[float] = None,
         show: bool = True,
+        plot_true_data: bool = False,
+        yscale = 5,
     ) -> Union[Figure, List[Figure]]:
-        """
-        Plot data-fit comparisons for selected stations.
+    
+    with torch.no_grad():
+        sigma_full = inv.get_sigma_full()
+        pred_dict = inv.forward_operator(sigma_full)
+    freqs = inv.freqs.cpu().numpy()
+    n_stations = len(inv.stations)
+    if station_indices is None:
+        station_indices = list(range(n_stations))
+    elif isinstance(station_indices, int):
+        station_indices = [station_indices]
+    else:
+        station_indices = list(station_indices)
 
-        station_indices
-            Which stations to plot. ``None`` (default) = **all** stations.
-            Pass a single ``int`` or a list to plot a subset, e.g. ``[0, 10, 20]``.
-        stations_per_figure
-            How many station columns per figure. Default 3 (three station panels per row).
-            Single-station figures are laid out with three columns to keep the display compact.
-        plot_noise_cap: Optional upper limit on **displayed** error-bar sigmas only, in the same
-            units as ``data_noise_std`` (log10(ρ) std for rho*; (φ/90) std for phs*). Does not
-            affect ``_compute_data_weights``, RMS χ², or OT — lowering σ in the inversion path
-            would inflate weights (∝ 1/σ²) on formally noisy points. If None, uses
-            ``inv.plot_noise_cap`` when set.
-        show
-            If True, call ``plt.show()`` for each figure.
-        Returns
-            A single :class:`~matplotlib.figure.Figure`, or a list when multiple figures are created.
-        """
-        apply_plot_style()
+    stations_per_figure = max(1, int(stations_per_figure))
+    figures: List[Figure] = []
+
+    title_fs = 13
+    label_fs = 12
+    tick_fs = 10
+    legend_fs = 8 
+
+    noise_floor = float(getattr(inv, "noise_floor", 0.01) or 0.01)
+    sigma_rho_floor = noise_floor / float(np.log(10.0))
+    phase_error_deg_floor = max(noise_floor * 28.6, 0.5)
+    bar_cap = plot_noise_cap if plot_noise_cap is not None else getattr(inv, "plot_noise_cap", None)
+    if bar_cap is not None:
+        bar_cap = float(bar_cap)
+
+    true_dict = None
+    if plot_true_data and hasattr(inv, "sig_true") and inv.sig_true is not None:
         with torch.no_grad():
-            sigma_full = inv.get_sigma_full()
-            pred_dict = inv.forward_operator(sigma_full)
-        freqs = inv.freqs.cpu().numpy()
-        n_stations = len(inv.stations)
-        if station_indices is None:
-            station_indices = list(range(n_stations))
-        elif isinstance(station_indices, int):
-            station_indices = [station_indices]
-        else:
-            station_indices = list(station_indices)
+            true_dict = inv.forward_operator(inv.sig_true)
 
-        stations_per_figure = max(1, int(stations_per_figure))
-        figures: List[Figure] = []
-
-        title_fs = 13
-        label_fs = 12
-        tick_fs = 10
-        legend_fs = 10
-        # Noise floors match weighting/RMS; optional plot_noise_cap only trims the bars.
-        noise_floor = float(getattr(inv, "noise_floor", 0.01) or 0.01)
-        sigma_rho_floor = noise_floor / float(np.log(10.0))
-        phase_error_deg_floor = max(noise_floor * 28.6, 0.5)
-        bar_cap = plot_noise_cap if plot_noise_cap is not None else getattr(inv, "plot_noise_cap", None)
-        if bar_cap is not None:
-            bar_cap = float(bar_cap)
-
-        for batch_start in range(0, len(station_indices), stations_per_figure):
-            batch = station_indices[batch_start : batch_start + stations_per_figure]
-            n_plots = len(batch)
-            n_cols = 3 if n_plots == 1 else min(n_plots, max(1, int(stations_per_figure)))
-            fig, axes = plt.subplots(
-                2, n_cols,
-                figsize=(5 * n_cols, 9),
-                sharex=True,
-            )
-            if np.ndim(axes) == 1:
-                axes = axes.reshape(2, -1)
-            rho_obs_all = []
-            for i, st_idx in enumerate(batch):
-                st_id = None
-                if getattr(inv, "station_ids", None) is not None and int(st_idx) < len(inv.station_ids):
-                    st_id = str(inv.station_ids[int(st_idx)])
-                if st_id is None or st_id.strip() == "":
-                    st_id = f"S{int(st_idx) + 1}"
-                if hasattr(inv, "shift_mask") and bool(inv.shift_mask[int(st_idx)].item()):
-                    st_id += "*"
-                ax_rho = axes[0, i]
-                for mode, color in zip(["xy", "yx"], ["r", "b"]):
-                    key_rho = f"rho{mode}"
-                    if key_rho not in inv.obs_data:
-                        continue
-                    rho_obs = inv.obs_data[key_rho][:, st_idx].cpu().numpy()
-                    rho_pred = pred_dict[key_rho][:, st_idx].cpu().numpy()
-                    rho_obs_no_shift = None
-                    if hasattr(inv, "obs_data_no_shift") and isinstance(getattr(inv, "obs_data_no_shift", None), dict):
-                        rho_obs_no_shift = inv.obs_data_no_shift.get(key_rho, None)
-                        if rho_obs_no_shift is not None:
-                            rho_obs_no_shift = rho_obs_no_shift[:, st_idx].cpu().numpy()
-                    valid = np.isfinite(rho_obs) & (rho_obs > 0)
-                    if rho_obs_no_shift is not None:
-                        valid = valid & np.isfinite(rho_obs_no_shift) & (rho_obs_no_shift > 0)
-                    if np.any(valid):
-                        rho_obs_valid = rho_obs[valid]
-                        freqs_valid = freqs[valid]
-                        rho_obs_all.append(rho_obs_valid)
-                        rho_obs_no_shift_valid = None
-                        if rho_obs_no_shift is not None:
-                            rho_obs_no_shift_valid = rho_obs_no_shift[valid]
-                        sigma_log_eff_t = inv.get_effective_data_noise_std(key_rho)
-                        if sigma_log_eff_t is None:
-                            sigma_log_eff = np.full_like(rho_obs_valid, sigma_rho_floor, dtype=float)
-                        else:
-                            sigma_log_eff = sigma_log_eff_t[:, st_idx].detach().cpu().numpy()[valid]
-                        if bar_cap is not None:
-                            sigma_log_eff = np.minimum(sigma_log_eff, bar_cap)
-                        rho_up = rho_obs_valid * 10.0 ** sigma_log_eff
-                        rho_dn = rho_obs_valid * 10.0 ** (-sigma_log_eff)
-                        yerr = [rho_obs_valid - rho_dn, rho_up - rho_obs_valid]
-                        if rho_obs_no_shift_valid is not None and getattr(inv, "shift_mask", None) is not None:
-                            try:
-                                is_shifted_station = bool(inv.shift_mask[int(st_idx)].item())
-                            except Exception:
-                                is_shifted_station = bool(inv.shift_mask[int(st_idx)])
-                            if is_shifted_station:
-                                ax_rho.plot(
-                                    freqs_valid, rho_obs_no_shift_valid,
-                                    "C3--", lw=1.5,
-                                    label=f"Obs {mode.upper()} (before shift)"
-                                )
-                        ax_rho.errorbar(
-                            freqs_valid, rho_obs_valid, yerr=yerr,
-                            fmt='o', ms=4, alpha=0.6,
-                            color=color,
-                            ecolor=color,
-                            elinewidth=1, capsize=2,
-                            label=f"Obs {mode.upper()}"
-                        )
-                    rho_pred_safe = np.clip(np.nan_to_num(rho_pred, nan=1e-2, posinf=1e6, neginf=1e-6), 1e-6, 1e10)
-                    ax_rho.plot(
-                        freqs, rho_pred_safe,
-                        f'{color}-', lw=1.5,
-                        label=f"Pred {mode.upper()}"
-                    )
-                ax_rho.set_xscale("log")
-                ax_rho.set_yscale("log")
-                ax_rho.set_box_aspect(1.0)
-                ax_rho.set_title(f"{st_id}\nApp. Resistivity", fontsize=title_fs)
-                ax_rho.set_xlabel("Frequency (Hz)", fontsize=label_fs)
-                ax_rho.tick_params(labelbottom=True)
-                if i == 0:
-                    ax_rho.set_ylabel(r"$\rho_a$ ($\Omega\cdot$m)", fontsize=label_fs)
-                ax_rho.grid(True, which="both", alpha=0.3)
-                ax_rho.tick_params(axis='both', labelsize=tick_fs)
-                ax_rho.legend(fontsize=legend_fs)
-                ax_phs = axes[1, i]
-                for mode, color in zip(["xy", "yx"], ["r", "b"]):
-                    key_phs = f"phs{mode}"
-                    if key_phs not in inv.obs_data:
-                        continue
-                    phs_obs = inv.obs_data[key_phs][:, st_idx].cpu().numpy()
-                    phs_pred = pred_dict[key_phs][:, st_idx].cpu().numpy()
-                    phs_obs_no_shift = None
-                    if hasattr(inv, "obs_data_no_shift") and isinstance(getattr(inv, "obs_data_no_shift", None), dict):
-                        phs_obs_no_shift = inv.obs_data_no_shift.get(key_phs, None)
-                        if phs_obs_no_shift is not None:
-                            phs_obs_no_shift = phs_obs_no_shift[:, st_idx].cpu().numpy()
-                    valid = np.isfinite(phs_obs)
-                    if phs_obs_no_shift is not None:
-                        valid = valid & np.isfinite(phs_obs_no_shift)
-                    if np.any(valid):
-                        phs_obs_valid = phs_obs[valid]
-                        freqs_valid = freqs[valid]
-                        phs_obs_no_shift_valid = None
-                        if phs_obs_no_shift is not None:
-                            phs_obs_no_shift_valid = phs_obs_no_shift[valid]
-                        sigma_norm_eff_t = inv.get_effective_data_noise_std(key_phs)
-                        if sigma_norm_eff_t is None:
-                            sigma_norm_eff = np.full_like(
-                                phs_obs_valid, phase_error_deg_floor / 90.0, dtype=float
-                            )
-                        else:
-                            sigma_norm_eff = (
-                                sigma_norm_eff_t[:, st_idx].detach().cpu().numpy()[valid]
-                            )
-                        if bar_cap is not None:
-                            sigma_norm_eff = np.minimum(sigma_norm_eff, bar_cap)
-                        yerr = sigma_norm_eff * 90.0
-                        if phs_obs_no_shift_valid is not None and getattr(inv, "shift_mask", None) is not None:
-                            try:
-                                is_shifted_station = bool(inv.shift_mask[int(st_idx)].item())
-                            except Exception:
-                                is_shifted_station = bool(inv.shift_mask[int(st_idx)])
-                            if is_shifted_station:
-                                ax_phs.plot(
-                                    freqs_valid, phs_obs_no_shift_valid,
-                                    "C3--", lw=1.5,
-                                    label=f"Obs {mode.upper()} (before shift)"
-                                )
-                        ax_phs.errorbar(
-                            freqs_valid, phs_obs_valid, yerr=yerr,
-                            fmt='o', ms=4, alpha=0.6,
-                            color=color,
-                            ecolor=color,
-                            elinewidth=1, capsize=2
-                        )
-                    phs_pred_safe = np.clip(np.nan_to_num(phs_pred, nan=45.0, posinf=90, neginf=0), 0, 90)
-                    ax_phs.plot(freqs, phs_pred_safe, f'{color}-', lw=1.5)
-                ax_phs.set_xscale("log")
-                ax_phs.set_ylim(0, 90)
-                ax_phs.set_box_aspect(1.0)
-                ax_phs.set_xlabel("Frequency (Hz)", fontsize=label_fs)
-                if i == 0:
-                    ax_phs.set_ylabel("Phase (deg)", fontsize=label_fs)
-                ax_phs.grid(True, which="both", alpha=0.3)
-                ax_phs.set_title(f"{st_id}\nPhase", fontsize=title_fs)
-                ax_phs.tick_params(axis='both', labelsize=tick_fs)
-            if len(rho_obs_all) > 0:
-                rho_concat = np.concatenate(rho_obs_all)
-                rho_valid = rho_concat[(np.isfinite(rho_concat) & (rho_concat > 0))]
-                if rho_valid.size > 0:
-                    ymin = float(rho_valid.min()) / 2.0
-                    ymax = float(rho_valid.max()) * 2.0
-                else:
-                    ymin, ymax = 1.0, 1e6
-                for ax in axes[0, :n_plots]:
-                    ax.set_ylim(ymin, ymax)
-            axes[0, 0].invert_xaxis()
-            axes[0, 0].set_xlim(freqs.max(), freqs.min())
-            plt.tight_layout()
-            fig.text(
-                0.5,
-                0.01,
-                "* denotes stations affected by static shift.",
-                ha="center",
-                fontsize=11,
-            )
-            figures.append(fig)
-            if show:
-                plt.show()
-
-        if not figures:
-            return None
-        return figures[0] if len(figures) == 1 else figures
-
+    for batch_start in range(0, len(station_indices), stations_per_figure):
+        batch = station_indices[batch_start : batch_start + stations_per_figure]
+        n_plots = len(batch)
+        n_cols = 3 if n_plots == 1 else min(n_plots, max(1, int(stations_per_figure)))
         
+        fig, axes = plt.subplots(
+            2, n_cols,
+            figsize=(5 * n_cols, 7),
+            sharex=True,
+            gridspec_kw={'height_ratios': [1.0, 0.5], 'hspace': 0.05, 'width_ratios': [1.0] * n_cols} 
+        )
+        
+        if np.ndim(axes) == 1:
+            axes = axes.reshape(2, -1)
+        
+        rho_obs_all = []
+        for i, st_idx in enumerate(batch):
+            st_id = str(inv.station_ids[int(st_idx)]) if getattr(inv, "station_ids", None) is not None and int(st_idx) < len(inv.station_ids) else f"S{int(st_idx) + 1}"
+            if hasattr(inv, "shift_mask") and bool(inv.shift_mask[int(st_idx)].item()):
+                st_id += "*"
+            
+            ax_rho = axes[0, i]
+            for mode, color in zip(["xy", "yx"], ["r", "b"]):
+                key_rho = f"rho{mode}"
+                if key_rho not in inv.obs_data: continue
+                rho_obs = inv.obs_data[key_rho][:, st_idx].cpu().numpy()
+                rho_pred = pred_dict[key_rho][:, st_idx].cpu().numpy()
+                rho_true = true_dict[key_rho][:, st_idx].cpu().numpy() if (plot_true_data and true_dict and key_rho in true_dict) else None
+                
+                valid = np.isfinite(rho_obs) & (rho_obs > 0)
+                if np.any(valid):
+                    rho_obs_valid = rho_obs[valid]
+                    rho_obs_all.append(rho_obs_valid) # 用于计算全局ymin/ymax
+                    freqs_valid = freqs[valid]
+                    sigma_log_eff = inv.get_effective_data_noise_std(key_rho)
+                    sigma_log_eff = sigma_log_eff[:, st_idx].detach().cpu().numpy()[valid] if sigma_log_eff is not None else np.full_like(rho_obs_valid, sigma_rho_floor)
+                    if bar_cap is not None: sigma_log_eff = np.minimum(sigma_log_eff, bar_cap)
+                    
+                    # 修正：强制 XY 为黑色(k)，YX 为灰色
+                    if plot_true_data and rho_true is not None and np.all(np.isfinite(rho_true[valid])):
+                        true_color = 'k' if mode == 'xy' else 'gray'
+                        ax_rho.plot(freqs_valid, rho_true[valid], "-", color=true_color, lw=2, label=f"True {mode.upper()}")
+                    
+                    yerr = [rho_obs_valid - rho_obs_valid * 10.0**(-sigma_log_eff), rho_obs_valid * 10.0**(sigma_log_eff) - rho_obs_valid]
+                    ax_rho.errorbar(freqs_valid, rho_obs_valid, yerr=yerr, fmt='o', ms=4, alpha=0.6, color=color, ecolor=color, elinewidth=1, capsize=2, label=f"Obs {mode.upper()}")
+                
+                ax_rho.plot(freqs, np.clip(np.nan_to_num(rho_pred, nan=1e-2), 1e-6, 1e10), f'{color}-', lw=1.5, label=f"Pred {mode.upper()}")
+
+            ax_rho.set_xscale("log"); ax_rho.set_yscale("log"); ax_rho.set_box_aspect(1.0)
+            ax_rho.set_title(st_id, fontsize=title_fs) 
+            if i == 0: ax_rho.set_ylabel(r"Apparent Resistivity ($\Omega\cdot$m)", fontsize=label_fs)
+            ax_rho.grid(True, which="both", alpha=0.3); ax_rho.legend(fontsize=legend_fs, loc="upper right")
+            
+            # --- Phase Plot ---
+            ax_phs = axes[1, i]
+            for mode, color in zip(["xy", "yx"], ["r", "b"]):
+                key_phs = f"phs{mode}"
+                if key_phs not in inv.obs_data: continue
+                phs_obs = inv.obs_data[key_phs][:, st_idx].cpu().numpy()
+                phs_true = true_dict[key_phs][:, st_idx].cpu().numpy() if (plot_true_data and true_dict and key_phs in true_dict) else None
+                
+                valid = np.isfinite(phs_obs)
+                if np.any(valid):
+                    # 修正：同样强制 Phase 的 True XY 为黑色
+                    if plot_true_data and phs_true is not None and np.all(np.isfinite(phs_true[valid])):
+                        ax_phs.plot(freqs[valid], phs_true[valid], "-", color='k' if mode == 'xy' else 'gray', lw=2)
+                    ax_phs.errorbar(freqs[valid], phs_obs[valid], fmt='o', ms=4, alpha=0.6, color=color, ecolor=color, elinewidth=1, capsize=2)
+                ax_phs.plot(freqs, np.clip(np.nan_to_num(pred_dict[key_phs][:, st_idx].cpu().numpy(), nan=45.0), 0, 90), f'{color}-', lw=1.5)
+            
+            ax_phs.set_xscale("log"); ax_phs.set_ylim(0, 90); ax_phs.set_box_aspect(0.5)
+            ax_phs.set_xlabel("Frequency (Hz)", fontsize=label_fs)
+            if i == 0: ax_phs.set_ylabel("Phase (deg)", fontsize=label_fs)
+            ax_phs.grid(True, which="both", alpha=0.3)
+            
+        if rho_obs_all:
+            rho_concat = np.concatenate(rho_obs_all)
+            rho_valid = rho_concat[(np.isfinite(rho_concat) & (rho_concat > 0))]
+            if rho_valid.size > 0:
+                ymin, ymax = float(rho_valid.min()) / yscale, float(rho_valid.max()) * yscale
+                for ax in axes[0, :n_plots]: ax.set_ylim(ymin, ymax)
+        
+        axes[0, 0].invert_xaxis(); axes[0, 0].set_xlim(freqs.max(), freqs.min())
+
+        fig.text(0.5, 0.01, "* denotes stations affected by static shift.", ha="center", fontsize=11)
+        figures.append(fig)
+        if show: plt.show()
+
+    return figures[0] if len(figures) == 1 else figures
+
+
+
+
+
+
+
 
 def plot_1d_profiles(
         inv,
