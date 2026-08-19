@@ -6,23 +6,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Optional, Dict, Any
 try:
-    # 首先尝试相对导入（当作为包的一部分时）
+    # First try relative import (when used as part of a package)
     from .constraints import ConstraintCalculator
     from .optimizer import OptimizerConfig
 except ImportError:
     try:
-        # 再尝试绝对导入（从src开始）
+        # Then try absolute import (from src)
         from src.constraints import ConstraintCalculator
         from src.optimizer import OptimizerConfig
     except ImportError:
-        # 最后尝试直接导入（如果在src目录中运行）
+        # Finally try a direct import (when run from the src directory)
         from constraints import ConstraintCalculator
         from optimizer import OptimizerConfig
 
 
 class MT1DInverter:
     """
-    MT 1D 反演类 (融合: 选择性对数参数化 + Occam约束)
+    MT 1D inversion class (fused: selective log parameterization + Occam constraint)
     """
     MU = 4e-7 * math.pi
     PI = math.pi
@@ -34,31 +34,31 @@ class MT1DInverter:
         self.use_sinkhorn = use_sinkhorn
         self.sinkhorn_dim = sinkhorn_dim
 
-        # 模型参数
+        # Model parameters
         self.true_dz = None
         self.true_sig = None
         self.dz_inv = None
         self.log_sig_inv = None
         self.sig_inv = None
 
-        # 数据
+        # Data
         self.freq = None
         self.zxy_obs = None
         self.rho_obs = None
         self.phs_obs = None
         self.noise_level = None
 
-        # 误差估计
+        # Error estimates
         self.delta_rho = None
         self.delta_phs = None
 
-        # 优化器和约束计算器
+        # Optimizer and constraint calculator
         self.optimizer_config = None
         self.optimizer_config = OptimizerConfig(device=self.device)
         self.constraint_calc = ConstraintCalculator(device=self.device)
         self.loss_history = []
 
-        # Occam参数
+        # Occam parameters
         self.use_occam_constraint = False
         self.occam_mu = 0.0001
         self.occam_target_misfit = 1.0
@@ -71,27 +71,27 @@ class MT1DInverter:
         self.regularization_history = []
         self.chi2_history = []
 
-        # OT blur自适应
+        # Adaptive OT blur
         self.blur_init = 0.1
         self.blur_min = 0.002
         self.blur_decay = 0.93
         self.current_blur = self.blur_init
 
-        # 风格数据权重
+        # Style data weights
         self.rho_weights = None
         self.phs_weights = None
         self.use_data_weighting = use_data_weighting
-        self.gradient_clip_value = 1.0  # 添加梯度裁剪参数
-        # 参考模型修正：使反演结果向参考模型靠拢
-        self.reference_sig = None   # 参考电导率 (n_layers,)，与反演层数一致
-        self.ref_weight = 0.0      # 参考模型惩罚权重，0 表示不使用
-        param_mode = "对数参数空间"
+        self.gradient_clip_value = 1.0  # gradient clipping parameter
+        # Reference-model correction: pull the inversion toward a reference model
+        self.reference_sig = None   # reference conductivity (n_layers,), matching inversion layers
+        self.ref_weight = 0.0      # reference-model penalty weight; 0 means unused
+        param_mode = "log parameter space"
         print(f"Using device: {self.device}")
         print(f"Parameterization: {param_mode}")
         print(f"Using {sinkhorn_dim}D Sinkhorn loss function" if use_sinkhorn else "Using MSE loss function")
 
     def mt1d_forward(self, freq: torch.Tensor, dz: torch.Tensor, sig: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """MT 1D 正演"""
+        """MT 1D forward modeling"""
         nf = len(freq)
         zxy = torch.zeros(nf, dtype=torch.complex64, device=self.device)
         rho = torch.zeros(nf, dtype=torch.float32, device=self.device)
@@ -122,45 +122,45 @@ class MT1DInverter:
 
     def calculate_data_errors(self):
         """
-        根据阻抗误差计算视电阻率和相位的误差
-        使用误差传播定律
+        Compute apparent-resistivity and phase errors from impedance errors
+        using the law of error propagation
         """
-        # 阻抗实部虚部误差（已知）
+        # Impedance real/imaginary errors (known)
         sigma_Z_real = self.delta_zxy_real
         sigma_Z_imag = self.delta_zxy_imag
         
         Z = self.zxy_obs
         Z_abs = torch.abs(Z)
         
-        # 视电阻率误差传播
+        # Apparent-resistivity error propagation
         # ρ_a = |Z|² / (ωμ) => σ_ρ ≈ 2ρ × (σ_Z/|Z|)
         omega = 2.0 * self.PI * self.freq
         rho_apparent = torch.abs(Z)**2 / (omega * self.MU)
         
-        # 相对误差：σ_ρ/ρ ≈ 2 × σ_Z/|Z|
-        relative_error_rho = 2.0 * self.noise_level  # 因为 σ_Z/|Z| = noise_level
+        # Relative error: σ_ρ/ρ ≈ 2 × σ_Z/|Z|
+        relative_error_rho = 2.0 * self.noise_level  # because σ_Z/|Z| = noise_level
         self.delta_rho = relative_error_rho * rho_apparent
         
-        # 相位误差传播  
-        # φ = atan2(Z_imag, Z_real) => σ_φ ≈ σ_Z/|Z| (弧度)
+        # Phase error propagation  
+        # φ = atan2(Z_imag, Z_real) => σ_φ ≈ σ_Z/|Z| (radians)
         sigma_phi_rad = self.noise_level  # σ_Z/|Z| = noise_level
-        self.delta_phs = torch.full_like(self.freq, sigma_phi_rad * 180.0 / self.PI)  # 转换为度
+        self.delta_phs = torch.full_like(self.freq, sigma_phi_rad * 180.0 / self.PI)  # convert to degrees
         
-        print(f"视电阻率误差范围: {torch.min(self.delta_rho):.4f} - {torch.max(self.delta_rho):.4f} Ω·m")
-        print(f"相位误差: {torch.mean(self.delta_phs):.2f}°")
+        print(f"Apparent resistivity error range: {torch.min(self.delta_rho):.4f} - {torch.max(self.delta_rho):.4f} Ω·m")
+        print(f"Phase error: {torch.mean(self.delta_phs):.2f}°")
         
-        # 归一化权重(使均值=1)
+        # Normalize weights (so the mean is 1)
         eps = 1e-10
         self.rho_weights = 1.0 / (self.delta_rho + eps)
         self.phs_weights = 1.0 / (self.delta_phs + eps)
         self.rho_weights = self.rho_weights / torch.mean(self.rho_weights)
         self.phs_weights = self.phs_weights / torch.mean(self.phs_weights)
         if self.use_data_weighting:
-        # 使用精确的误差传播计算权重
+        # Compute weights from exact error propagation
             self.rho_weights = 1.0 / (self.delta_rho + 1e-10)
             self.phs_weights = 1.0 / (self.delta_phs + 1e-10)
             
-            # 归一化权重
+            # Normalize weights
             self.rho_weights = self.rho_weights / torch.mean(self.rho_weights)
             self.phs_weights = self.phs_weights / torch.mean(self.phs_weights)
         else:
@@ -177,30 +177,30 @@ class MT1DInverter:
                               outlier_strength: float = 4.0,
                               seed: Optional[int] = None) -> None:
         """
-        生成合成观测数据（阻抗层面加噪声后导出 ρ/φ）。
+        Generate synthetic observations (add noise at the impedance level, then derive ρ/φ).
 
         Args:
-            true_dz: 真实层厚 (m)
-            true_sig: 真实电导率 (S/m)
-            freq_range: 频率范围 (log10 Hz)
-            n_freq: 频点数
-            noise_level: 相对噪声水平（相对 |Z|）
-            noise_type: "gaussian" 仅高斯噪声；"nongaussian" 在高斯基础上叠加随机离群值。
-                其他常见非高斯方式（可后续扩展）：拉普拉斯/双指数、Student-t 重尾、均匀野值等。
-            outlier_frac: 离群值比例 (0~1)，仅当 noise_type=="nongaussian" 时有效
-            outlier_strength: 离群值强度（相对基线 delta 的倍数），仅 nongaussian 时有效
-            seed: 随机种子
+            true_dz: true layer thicknesses (m)
+            true_sig: true conductivity (S/m)
+            freq_range: frequency range (log10 Hz)
+            n_freq: number of frequencies
+            noise_level: relative noise level (relative to |Z|)
+            noise_type: "gaussian" Gaussian noise only; "nongaussian" overlays random outliers on Gaussian noise.
+                Other common non-Gaussian options (extensible later): Laplace/double-exponential, Student-t heavy tails, uniform outliers, etc.
+            outlier_frac: outlier fraction (0~1), used only when noise_type=="nongaussian"
+            outlier_strength: outlier strength (multiple of the baseline delta), used only for nongaussian
+            seed: random seed
         """
         if noise_type not in ("gaussian", "nongaussian"):
             raise ValueError(
-                f'noise_type 必须为 "gaussian" 或 "nongaussian"，当前为 "{noise_type}"。'
-                '请检查拼写（如 nonguassin -> nongaussian）。'
+                f'noise_type must be "gaussian" or "nongaussian", got "{noise_type}".'
+                'Please check the spelling (e.g. nonguassin -> nongaussian).'
             )
         if noise_type == "nongaussian":
             if not (0 <= outlier_frac <= 1):
-                raise ValueError(f"noise_type='nongaussian' 时 outlier_frac 须在 [0, 1]，当前为 {outlier_frac}")
+                raise ValueError(f"When noise_type='nongaussian', outlier_frac must be in [0, 1], got {outlier_frac}")
             if outlier_strength <= 0:
-                raise ValueError(f"noise_type='nongaussian' 时 outlier_strength 须 > 0，当前为 {outlier_strength}")
+                raise ValueError(f"When noise_type='nongaussian', outlier_strength must be > 0, got {outlier_strength}")
         if seed is not None:
             torch.manual_seed(seed)
             np.random.seed(seed)
@@ -220,7 +220,7 @@ class MT1DInverter:
         noise_imag = torch.randn_like(self.true_zxy.imag) * self.delta_zxy_imag
         self.zxy_obs = torch.complex(self.true_zxy.real + noise_real, self.true_zxy.imag + noise_imag)
 
-        # 非高斯：在部分点上叠加离群噪声（模拟野值）
+        # Non-Gaussian: add outlier noise on a subset of points (simulate wild values)
         if noise_type == "nongaussian":
             n_tot = self.zxy_obs.numel()
             n_out = max(1, int(round(outlier_frac * n_tot)))
@@ -239,10 +239,10 @@ class MT1DInverter:
         self.rho_obs = torch.abs(self.zxy_obs)**2 / (omega * self.mu)
         self.phs_obs = torch.atan2(self.zxy_obs.imag, self.zxy_obs.real) * 180.0 / self.PI
 
-        # 计算视电阻率和相位的误差
+        # Compute apparent-resistivity and phase errors
         self.calculate_data_errors()
 
-        # 保存对数域的噪声标准差（仍按基线高斯水平，离群值会体现在残差中）
+        # Save noise std in log domain (still based on baseline Gaussian level; outliers appear in residuals)
         eps = 1e-8
         self.rho_noise_std_log = 2 * max(eps, noise_level) / math.log(10)
         self.phs_noise_std_norm = max(eps, noise_level)
@@ -257,46 +257,46 @@ class MT1DInverter:
                      thickness_mode: str = "equal",
                      increasing_exponent: float = 1.0) -> None:
         """
-        初始化反演模型（支持不同的厚度分配策略）
+        Initialize the inversion model (supports different thickness-allocation strategies)
         """
-        # 验证
+        # Validate
         if n_layers < 2:
-            raise ValueError("n_layers 必须 >= 2")
+            raise ValueError("n_layers must be >= 2")
 
-        n_dz = n_layers - 1  # 厚度块数
+        n_dz = n_layers - 1  # number of thickness blocks
         device = self.device
 
         if thickness_mode == "equal":
             dz_value = total_depth / n_dz
             self.dz_inv = torch.full((n_dz,), dz_value, dtype=torch.float32,
                                     device=device, requires_grad=False)
-            mode_name = "等厚度"
+            mode_name = "equal thickness"
 
         elif thickness_mode in ("increasing_linear", "increasing_geometric"):
-            # 生成一个基准权重序列，然后归一化乘以 total_depth
+            # Build a baseline weight sequence, then normalize and scale by total_depth
             if thickness_mode == "increasing_linear":
-                # 线性或幂律增长：权重 i^p （i 从 1 到 n_dz）
+                # Linear or power-law growth: weights i^p (i from 1 to n_dz)
                 p = float(increasing_exponent) if increasing_exponent > 0 else 1.0
                 indices = np.arange(1, n_dz + 1, dtype=np.float64)
                 weights = indices ** p
-                mode_name = f"线性/幂次增长 (exponent={p})"
+                mode_name = f"linear/power growth (exponent={p})"
             else:  # increasing_geometric
-                # 几何增长：权重 = r^(i-1)，通过给定 exponent 找到 r 使得总和合理。
+                # Geometric growth: weights = r^(i-1); choose r from the given exponent so the sum is reasonable.
                 r = float(increasing_exponent) ** (1.0 / max(1, n_dz - 1))
                 indices = np.arange(0, n_dz, dtype=np.float64)
                 weights = r ** indices
-                mode_name = f"几何增长 (approx r={r:.3f})"
+                mode_name = f"geometric growth (approx r={r:.3f})"
 
             weights_sum = np.sum(weights)
             if weights_sum <= 0:
-                raise ValueError("生成的权重和为0，检查参数")
+                raise ValueError("Generated weights sum to 0; check the parameters")
             
             dz_np = (weights / weights_sum) * total_depth
             self.dz_inv = torch.tensor(dz_np, dtype=torch.float32, device=self.device, requires_grad=False)
         else:
-            raise ValueError(f"不支持的 thickness_mode: {thickness_mode}")
+            raise ValueError(f"Unsupported thickness_mode: {thickness_mode}")
         
-        # 统一使用对数参数化：Sinkhorn 与非 Sinkhorn 均优化 log(sig)
+        # Always use log parameterization: both Sinkhorn and non-Sinkhorn optimize log(sig)
         self.log_sig_inv = torch.full(
             (n_layers,),
             torch.log(torch.tensor(initial_sig, dtype=torch.float32, device=self.device)),
@@ -305,24 +305,24 @@ class MT1DInverter:
             requires_grad=True
         )
         if self.use_sinkhorn:
-            print(f"初始化对数电导率参数（Sinkhorn模式）")
+            print(f"Initialized log-conductivity parameters (Sinkhorn mode)")
         else:
-            print(f"初始化对数电导率参数（非Sinkhorn模式）")
-        print(f"初始电导率: {torch.exp(self.log_sig_inv).tolist()}")
+            print(f"Initialized log-conductivity parameters (non-Sinkhorn mode)")
+        print(f"Initial conductivity: {torch.exp(self.log_sig_inv).tolist()}")
 
-        print(f"使用{mode_name}模式")
+        print(f"Using {mode_name} mode")
         cum_depth = np.cumsum(self.dz_inv.detach().cpu().numpy())
-        print(f"初始化模型，共 {n_layers} 层")
-        print(f"累计深度: {cum_depth.tolist()}")
+        print(f"Initialized model with {n_layers} layers")
+        print(f"Cumulative depth: {cum_depth.tolist()}")
 
     
     def set_reference_model(self, ref_sig, weight: float = 0.01) -> None:
         """
-        设置参考模型修正：在损失中加入 weight * ||log10(sig) - log10(ref)||^2，
-        使反演结果向参考模型靠拢。
-        ref_sig: 参考电导率，形状 (n_layers,) 需与 initialize_model 的 n_layers 一致；
-                 可为 list、numpy 或 tensor。
-        weight: 参考模型惩罚权重，0 表示关闭。典型值 0.001~0.1。
+        Set a reference-model correction: add weight * ||log10(sig) - log10(ref)||^2 to the loss
+        so the inversion is pulled toward the reference model.
+        ref_sig: reference conductivity, shape (n_layers,), must match n_layers from initialize_model;
+                 may be a list, numpy array, or tensor.
+        weight: reference-model penalty weight; 0 disables it. Typical values 0.001~0.1.
         """
         if weight <= 0:
             self.reference_sig = None
@@ -335,8 +335,8 @@ class MT1DInverter:
         self.ref_weight = float(weight)
         n = t.numel()
         if self.log_sig_inv is not None and self.log_sig_inv.numel() != n:
-            raise ValueError(f"参考模型层数 {n} 与反演层数 {self.log_sig_inv.numel()} 不一致，请先 initialize_model 再 set_reference_model")
-        print(f"参考模型修正已开启: ref_weight={self.ref_weight}, 参考层数={n}")
+            raise ValueError(f"Reference model has {n} layers but inversion has {self.log_sig_inv.numel()}; call initialize_model before set_reference_model")
+        print(f"Reference-model correction enabled: ref_weight={self.ref_weight}, n_layers={n}")
 
     def setup_optimizer(self, lr: float = 0.01, reg_weight_sig: float = 0.0001, phs_weight: float = 0.5,
                     p: int = 2, scaling: float = 0.9,
@@ -345,20 +345,20 @@ class MT1DInverter:
                     betas: Tuple[float, float] = (0.9, 0.999),
                     eps: float = 1e-8, momentum: float = 0.9) -> None:
         """
-        设置优化器（使用优化器配置模块）。
-        当前为对数参数化 log(σ)，梯度尺度与原始 σ 不同：∂L/∂(log σ)=σ·∂L/∂σ，
-        小电导率时更新较慢。若 100 轮内拟合不足，可增大 lr（如 0.01～0.02）或增加 num_epochs。
+        Set up the optimizer (via the optimizer-config module).
+        Currently log-parameterized as log(σ); the gradient scale differs from raw σ: ∂L/∂(log σ)=σ·∂L/∂σ,
+        so updates are slower at small conductivity. If the fit is insufficient within 100 epochs, increase lr (e.g. 0.01–0.02) or num_epochs.
         """
         self.reg_weight_sig = reg_weight_sig
         self.phs_weight = phs_weight
         self.p_norm = p
 
-        # 确保参数已经初始化（Sinkhorn 与 MSE 均使用对数参数 log_sig_inv）
+        # Ensure parameters are initialized (both Sinkhorn and MSE use log parameter log_sig_inv)
         if self.log_sig_inv is None:
-            raise ValueError("log_sig_inv 未初始化，请先调用 initialize_model")
+            raise ValueError("log_sig_inv is not initialized; call initialize_model first")
         params = [self.log_sig_inv]
 
-        # 使用优化器配置模块创建优化器
+        # Create optimizer via the optimizer-config module
         self.optimizer = self.optimizer_config.create_optimizer(
             params=params,
             optimizer_type=optimizer_type,
@@ -369,7 +369,7 @@ class MT1DInverter:
             momentum=momentum
         )
 
-        # 创建损失函数
+        # Create loss functions
         if self.use_sinkhorn:
             self.current_blur = self.blur_init
             self.sinkhorn_loss = self.optimizer_config.create_sinkhorn_loss(
@@ -401,24 +401,25 @@ class MT1DInverter:
         min_ratio_for_update: float = 0.1
     ):
         """
-        根据数据项与模型项的梯度量级，自适应更新 lambda（改进版，和 2D 版本保持一致）。
+        Adaptively update lambda from the relative magnitude of data-term and model-term gradients
+        (improved version, consistent with the 2D implementation).
 
-        改进点：
-        1. 使用移动平均平滑梯度范数，避免单次噪声误判
-        2. 保留指数下降机制（效果良好）
-        3. 添加安全机制，避免 ratio 过小时过度下降
+        Improvements:
+        1. Smooth gradient norms with a moving average to avoid misjudging from single-step noise
+        2. Keep the exponential-decay mechanism (works well)
+        3. Add a safety check so lambda does not drop too far when the ratio is very small
 
-        约束：lambda 只允许下降（逐步放松正则）
-        目标（软约束）：||∇Φ_d|| ≲ λ ||∇Φ_m||
+        Constraint: lambda is only allowed to decrease (gradually relax regularization)
+        Target (soft constraint): ||∇Φ_d|| ≲ λ ||∇Φ_m||
 
-        说明：1D 模式下可能关闭 Occam 正则（loss_model=0），此时自动保持 lambda 不变。
+        Note: in 1D, Occam regularization may be off (loss_model=0); lambda is then left unchanged.
         """
 
         eps = 1e-12
         params = self.log_sig_inv
 
         # ----------------------------
-        # 1. 计算当前梯度范数
+        # 1. Current gradient norms
         # ----------------------------
         grad_d = torch.autograd.grad(
             loss_data,
@@ -430,7 +431,7 @@ class MT1DInverter:
         if grad_d is None:
             grad_d = torch.zeros_like(params)
 
-        # 注意：Occam 关闭时 loss_model 往往是常数 0，不可求导；此处做兼容。
+        # Note: when Occam is off, loss_model is often the constant 0 and cannot be differentiated; handle that here.
         grad_m = None
         can_grad_model = (
             isinstance(loss_model, torch.Tensor)
@@ -455,7 +456,7 @@ class MT1DInverter:
         norm_m_item = float(norm_m_raw.item())
 
         # ----------------------------
-        # 2. 更新历史记录
+        # 2. Update history
         # ----------------------------
         if not hasattr(self, "grad_norm_d_history"):
             self.grad_norm_d_history = []
@@ -475,7 +476,7 @@ class MT1DInverter:
                 self.ratio_history = self.ratio_history[-max_history:]
 
         # ----------------------------
-        # 3. 计算移动平均（平滑梯度范数）
+        # 3. Moving average (smooth gradient norms)
         # ----------------------------
         if len(self.grad_norm_d_history) >= window_size:
             norm_d_smooth = float(np.mean(self.grad_norm_d_history[-window_size:]))
@@ -485,14 +486,14 @@ class MT1DInverter:
             norm_m_smooth = norm_m_item
 
         # ----------------------------
-        # 4. 计算 ratio（已平滑）
+        # 4. Compute ratio (already smoothed)
         # ----------------------------
         ratio = norm_d_smooth / (dr * float(current_lambda) * norm_m_smooth + eps)
         ratio = float(ratio)
         self.ratio_history.append(ratio)
 
         # ----------------------------
-        # 5. 只允许 lambda 下降（指数下降）
+        # 5. Only allow lambda to decrease (exponential decay)
         # ----------------------------
         if ratio < 1.0:
             if ratio < min_ratio_for_update:
@@ -504,7 +505,7 @@ class MT1DInverter:
             new_lambda = float(current_lambda)
 
         # ----------------------------
-        # 6. 安全约束
+        # 6. Safety constraints
         # ----------------------------
         new_lambda = float(np.clip(new_lambda, lambda_min, lambda_max))
         new_lambda = min(float(current_lambda), new_lambda)
@@ -512,7 +513,7 @@ class MT1DInverter:
         return new_lambda, norm_d_item, norm_m_item
 
     def _compute_rms_chi2_from_pred(self, rho_pred: torch.Tensor, phs_pred: torch.Tensor) -> float:
-        """从当前步的预测 (rho_pred, phs_pred) 计算总 χ² RMS，无需额外正演。"""
+        """Compute total χ² RMS from the current-step predictions (rho_pred, phs_pred), without an extra forward run."""
         rho_obs_np = self.rho_obs.cpu().numpy()
         phs_obs_np = self.phs_obs.cpu().numpy()
         rho_pred_np = rho_pred.detach().cpu().numpy()
@@ -526,14 +527,14 @@ class MT1DInverter:
 
     def calculate_chi2_rms(self) -> Dict[str, float]:
         """
-        计算基于χ²统计量的RMS
+        Compute RMS based on χ² statistics
         """
         with torch.no_grad():
             sig_raw = torch.exp(self.log_sig_inv)
             zxy_pred, rho_pred, phs_pred = self.mt1d_forward(
                 self.freq, self.dz_inv, sig_raw)
         
-        # 转换为numpy便于计算
+        # Convert to numpy for computation
         rho_obs_np = self.rho_obs.cpu().numpy()
         rho_pred_np = rho_pred.cpu().numpy()
         phs_obs_np = self.phs_obs.cpu().numpy()
@@ -543,7 +544,7 @@ class MT1DInverter:
         
         results = {}
         
-        # 1. 视电阻率χ²
+        # 1. Apparent-resistivity χ²
         rho_chi = (rho_obs_np - rho_pred_np) / delta_rho_np
         rho_chi_squared = rho_chi**2
         rho_chi2_rms = np.sqrt(np.mean(rho_chi_squared))
@@ -551,7 +552,7 @@ class MT1DInverter:
         results['rho_chi2_mean'] = float(np.mean(rho_chi_squared))
         results['rho_chi2_max'] = float(np.max(rho_chi_squared))
         
-        # 2. 相位χ²
+        # 2. Phase χ²
         phs_chi = (phs_obs_np - phs_pred_np) / delta_phs_np
         phs_chi_squared = phs_chi**2
         phs_chi2_rms = np.sqrt(np.mean(phs_chi_squared))
@@ -559,55 +560,55 @@ class MT1DInverter:
         results['phs_chi2_mean'] = float(np.mean(phs_chi_squared))
         results['phs_chi2_max'] = float(np.max(phs_chi_squared))
         
-        # 3. 总χ² RMS（等权重）
+        # 3. Total χ² RMS (equal weights)
         total_chi2_rms = np.sqrt(0.5 * rho_chi2_rms**2 + 0.5 * phs_chi2_rms**2)
         results['total_chi2_rms'] = float(total_chi2_rms)
         
-        # 4. 传统RMS（绝对误差）
+        # 4. Traditional RMS (absolute error)
         rho_obs_log = np.log10(rho_obs_np)
         rho_pred_log = np.log10(rho_pred_np)
         results['rho_rms_log'] = float(np.sqrt(np.mean((rho_obs_log - rho_pred_log)**2)))
         results['phs_rms_deg'] = float(np.sqrt(np.mean((phs_obs_np - phs_pred_np)**2)))
         
-        # 5. 相对误差
+        # 5. Relative error
         rho_relative_error = np.abs(rho_obs_np - rho_pred_np) / (rho_obs_np + 1e-10)
         results['rho_rms_relative'] = float(np.sqrt(np.mean(rho_relative_error**2)))
         
         phs_relative_error = np.abs(phs_obs_np - phs_pred_np) / 90.0
         results['phs_rms_relative'] = float(np.sqrt(np.mean(phs_relative_error**2)))
         
-        # 6. 新增：诊断信息
-        results['n_outliers_rho'] = int(np.sum(rho_chi_squared > 9))  # χ² > 9 (3σ) 的点数
+        # 6. Added: diagnostic info
+        results['n_outliers_rho'] = int(np.sum(rho_chi_squared > 9))  # number of points with χ² > 9 (3σ)
         results['n_outliers_phs'] = int(np.sum(phs_chi_squared > 9))
         
-        # 计算误差条的质量（δ是否合理）
-        results['error_scale_rho'] = float(np.sqrt(np.mean(rho_chi_squared)))  # 应该≈1
-        results['error_scale_phs'] = float(np.sqrt(np.mean(phs_chi_squared)))  # 应该≈1
+        # Quality of error bars (whether δ is reasonable)
+        results['error_scale_rho'] = float(np.sqrt(np.mean(rho_chi_squared)))  # should be ≈1
+        results['error_scale_phs'] = float(np.sqrt(np.mean(phs_chi_squared)))  # should be ≈1
         
         return results
     
-    #Params: 放在 calculate_chi2_rms 和 run_inversion 之间
+    # Params: between calculate_chi2_rms and run_inversion
     def _check_convergence(self, chi2_results: Dict[str, float], 
                          target_rms: float, 
                          tol: float = 1e-4) -> bool:
         """
-        内部收敛检查逻辑：同时检查绝对RMS目标和相对Loss变化
+        Internal convergence check: both an absolute RMS target and relative loss change
         """
         if target_rms is None: target_rms = 1.05
-        # 1. 提取当前指标
+        # 1. Extract current metrics
         rho_rms = chi2_results['rho_chi2_rms']
         phs_rms = chi2_results['phs_chi2_rms']
         total_rms = chi2_results['total_chi2_rms']
 
-        # 2. 绝对收敛标准 (RMS达标)
-        # 策略：总RMS达标，且两者偏差不能太极端（防止单一方拟合极差）
+        # 2. Absolute convergence (RMS target met)
+        # Strategy: total RMS is on target, and neither component is extremely off (avoid one-sided poor fit)
         if total_rms < target_rms:
             if rho_rms < target_rms * 1.5 and phs_rms < target_rms * 1.5:
-                print(f"✅ [停止] 达到目标 RMS: Total={total_rms:.3f} (Rho={rho_rms:.3f}, Phs={phs_rms:.3f})")
+                print(f"✅ [STOP] Target RMS reached: Total={total_rms:.3f} (Rho={rho_rms:.3f}, Phs={phs_rms:.3f})")
                 return True
         
-        # 3. 相对收敛标准 (Loss 停滞)
-        # 检查过去 N 次迭代 Loss 是否几乎没变
+        # 3. Relative convergence (loss stalled)
+        # Check whether loss has barely changed over the last N iterations
         window = 20
         if len(self.loss_history) > window:
             prev_loss = self.loss_history[-window]['total_loss']
@@ -616,8 +617,8 @@ class MT1DInverter:
             
            
             if rel_change < tol and total_rms < 1.5:
-                print(f" [停止] Loss 收敛停滞，{window}轮内相对变化率 {rel_change:.2e} < {tol}")
-                print(f"   当前 RMS: Total={total_rms:.3f}")
+                print(f" [STOP] Loss stalled: relative change {rel_change:.2e} < {tol} over {window} epochs")
+                print(f"   Current RMS: Total={total_rms:.3f}")
                 return True
                 
         return False
@@ -635,36 +636,36 @@ class MT1DInverter:
                  alpha: float = 0.5,
                  target_rms: float = 1.05) -> List[float]:
         """
-        执行反演过程（支持自适应正则化）
+        Run the inversion (supports adaptive regularization)
         
-        前置条件：
-        - setup_constraints() 必须在此方法之前调用
-        - setup_optimizer() 必须在此方法之前调用
+        Preconditions:
+        - setup_constraints() must be called before this method
+        - setup_optimizer() must be called before this method
         
         Args:
-            num_epochs: 迭代次数。对数参数化下建议 ≥200～500，若拟合慢可再增大或适当提高 setup_optimizer 的 lr。
-            print_interval: 打印间隔
-            use_adaptive_lambda: 是否启用自适应 lambda 更新
-            current_lambda: 初始正则化参数
-            warmup_epochs: 预热阶段轮数
-            update_interval: lambda 更新间隔
-            alpha: 梯度平衡的指数下降因子
-            lambda_min: lambda 最小值
+            num_epochs: number of iterations. With log parameterization, ≥200–500 is recommended; if the fit is slow, increase further or raise setup_optimizer lr.
+            print_interval: print interval
+            use_adaptive_lambda: whether to enable adaptive lambda updates
+            current_lambda: initial regularization parameter
+            warmup_epochs: number of warmup epochs
+            update_interval: lambda update interval
+            alpha: exponential decay factor for gradient balancing
+            lambda_min: minimum lambda
         """
         
-        # ===== 检查必要的初始化 =====
+        # ===== Check required initialization =====
         if not hasattr(self, 'constraint_calc'):
-            raise RuntimeError("必须先调用 setup_constraints() 方法")
+            raise RuntimeError("Must call setup_constraints() first")
         
         if not hasattr(self, 'optimizer'):
-            raise RuntimeError("必须先调用 setup_optimizer() 方法")
+            raise RuntimeError("Must call setup_optimizer() first")
         
         self.seed = seed
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
         print(f"[Info] Random seed = {self.seed}")
         
-        # ===== 初始化历史记录 =====
+        # ===== Initialize history =====
         self.loss_history = []
         self.data_misfit_history = []
         self.model_norm_history = []
@@ -687,16 +688,16 @@ class MT1DInverter:
             
             self.optimizer.zero_grad()
             
-            # ===== 获取电导率（对数参数化：先 exp 再参与正演与损失） =====
+            # ===== Get conductivity (log parameterization: exp first, then forward and loss) =====
             sig_raw = torch.exp(self.log_sig_inv)
             
-            # ===== 正向计算 =====
+            # ===== Forward computation =====
             if self.use_sinkhorn:
                 zxy_pred, rho_pred, phs_pred = self.mt1d_forward(
                     self.freq, self.dz_inv, sig_raw
                 )
 
-                # 数据标准化
+                # Data standardization
                 if hasattr(self, 'rho_weights') and self.rho_weights is not None:
                     rho_pred_weighted = torch.log10(rho_pred) * self.rho_weights
                     rho_obs_weighted = torch.log10(self.rho_obs) * self.rho_weights
@@ -708,7 +709,7 @@ class MT1DInverter:
                     phs_pred_weighted = phs_pred / 90.0
                     phs_obs_weighted = self.phs_obs / 90.0
 
-                # ===== Sinkhorn 数据项 =====
+                # ===== Sinkhorn data term =====
                 pred_points = torch.stack([
                     rho_pred_weighted,
                     phs_pred_weighted,
@@ -721,7 +722,7 @@ class MT1DInverter:
                 ], dim=1)
                 loss_data = self.sinkhorn_loss(pred_points, obs_points)
             
-                # ===== Occam 约束项（对数空间） =====
+                # ===== Occam constraint (log space) =====
                 loss_model = torch.tensor(0.0, device=self.device)
                 if self.use_occam_constraint:
                     model_for_occam = self.log_sig_inv / math.log(10)
@@ -732,7 +733,7 @@ class MT1DInverter:
                     )
 
             else:
-                # ===== 非 Sinkhorn 模式 =====
+                # ===== Non-Sinkhorn mode =====
                 zxy_pred, rho_pred, phs_pred = self.mt1d_forward(
                     self.freq, self.dz_inv, sig_raw
                 )
@@ -756,7 +757,7 @@ class MT1DInverter:
                 loss_phs = torch.mean(weighted_residual_phs**2)
                 loss_data = loss_rho + self.phs_weight * loss_phs
 
-                # ===== 约束项 =====
+                # ===== Constraint term =====
                 loss_model = torch.tensor(0.0, device=self.device)
                 if self.use_occam_constraint:
                     model_for_occam = self.log_sig_inv / math.log(10)
@@ -766,7 +767,7 @@ class MT1DInverter:
                         dz=self.dz_inv
                     )
             
-            # ===== 每轮计算梯度范数（用于记录与绘图）；自适应时按间隔更新 lambda =====
+            # ===== Compute gradient norms every epoch (for logging and plots); update lambda on interval when adaptive =====
             proposed_lambda, g_d, g_m = self.update_lambda_by_gradient_balance(
                 loss_data=loss_data,
                 loss_model=loss_model,
@@ -777,10 +778,10 @@ class MT1DInverter:
                 current_lambda = proposed_lambda
                 self.lambda_history.append(current_lambda)
             
-            # ===== 计算总损失 =====
+            # ===== Total loss =====
             total_loss = loss_data + current_lambda * loss_model
             
-            # ===== 参考模型修正 =====
+            # ===== Reference-model correction =====
             if self.reference_sig is not None and self.ref_weight > 0:
                 ref = self.reference_sig.to(self.device).detach().clamp(min=1e-6)
                 log10_ref = torch.log10(ref)
@@ -790,10 +791,10 @@ class MT1DInverter:
                 )
                 total_loss = total_loss + loss_ref
             
-            # ===== 反向传播和优化 =====
+            # ===== Backprop and optimization =====
             total_loss.backward()
             
-            # 梯度裁剪
+            # Gradient clipping
             self.optimizer_config.clip_gradients(
                 [self.log_sig_inv], 
                 max_norm=self.gradient_clip_value
@@ -801,7 +802,7 @@ class MT1DInverter:
             
             self.optimizer.step()
             
-            # 参数约束（对数空间：对应电导率约 1e-4 ~ 10）
+            # Parameter bounds (log space: conductivity about 1e-4 ~ 10)
             self.optimizer_config.clamp_parameters(
                 self.log_sig_inv, 
                 min_val=-9.2, 
@@ -811,7 +812,7 @@ class MT1DInverter:
             
             epoch_time = time.time() - start_epoch
             rms_chi2 = self._compute_rms_chi2_from_pred(rho_pred, phs_pred)
-            # 每轮记录：总迭代次数为横坐标，卡方、lambda、梯度范数供绘图
+            # Per-epoch log: epoch as x-axis; chi-squared, lambda, and gradient norms for plotting
             self.loss_history.append({
                 'epoch': epoch + 1,
                 'total_loss': total_loss.item(),
@@ -828,17 +829,17 @@ class MT1DInverter:
             self.regularization_history.append((current_lambda * loss_model).item())
             self.time_history.append(epoch_time)
 
-            # ===== Sinkhorn blur 自适应衰减 =====
+            # ===== Adaptive Sinkhorn blur decay =====
             if self.use_sinkhorn:
                 prev_blur = self.current_blur
                 self.current_blur = max(self.blur_min, self.current_blur * self.blur_decay)
                 if abs(self.current_blur - prev_blur) > 1e-8:
                     self.sinkhorn_loss.blur = self.current_blur
 
-            # ===== 定期计算χ² RMS 并检查收敛（chi2 详细记录在下方 print_interval 块中带 epoch 写入） =====
+            # ===== Periodically compute χ² RMS and check convergence (detailed chi2 is written with epoch in the print_interval block below) =====
             if track_chi2 and (epoch + 1) % print_interval == 0:
                 chi2_results = self.calculate_chi2_rms()
-                # 【新增】调用封装好的收敛检查函数
+                # Call the encapsulated convergence-check function
                 if enable_auto_stop:
                     should_stop = self._check_convergence(
                         chi2_results, 
@@ -847,10 +848,10 @@ class MT1DInverter:
                     )
                     
                     if should_stop:
-                        print(f"反演在第 {epoch + 1} 轮收敛。")
+                        print(f"Inversion converged at epoch {epoch + 1}.")
                         break
 
-            # --- 7. 每 print_interval 轮输出一次进度（格式与 2D 统一）---
+            # --- 7. Print progress every print_interval epochs (format aligned with 2D) ---
             if (epoch + 1) % print_interval == 0:
                 elapsed_sec = time.time() - start_total
                 epoch_sec = time.time() - start_epoch
@@ -873,8 +874,8 @@ class MT1DInverter:
                 data_label = "Sinkhorn" if self.use_sinkhorn else "MSE"
 
                 print(f"Epoch {epoch+1}/{num_epochs} [ {percent:5.1f}%]")
-                print(f"  已用时间: {elapsed_str} | 剩余时间: ~{remaining_str} | ETA: {eta_str}")
-                print(f"  Epoch耗时: {epoch_sec:.2f}s | 平均耗时: {avg_epoch_time:.2f}s")
+                print(f"  Elapsed: {elapsed_str} | Remaining: ~{remaining_str} | ETA: {eta_str}")
+                print(f"  Epoch time: {epoch_sec:.2f}s | Average time: {avg_epoch_time:.2f}s")
                 print(f"  Total: {total_loss.item():.4e} | Data({data_label}): {loss_data.item():.4e}")
                 print(f"  Misfit(RMS χ²): {total_rms:.3f} | Rough: {loss_model.item():.2e} | Lam: {current_lambda:.7f}")
                 print(f"  GradNorms: |g_d|={g_d:.3e} | |g_m|={g_m:.3e}")
@@ -889,51 +890,51 @@ class MT1DInverter:
                         print(f"\n>>> Converged at epoch {epoch + 1} <<<")
                         break
 
-        # ===== 反演完成 =====
+        # ===== Inversion finished =====
         total_time = time.time() - start_total
         avg_epoch_time = total_time / (epoch + 1) if epoch > 0 else total_time
         
-        # 最终χ²评估
+        # Final χ² evaluation
         if track_chi2:
             final_chi2 = self.calculate_chi2_rms()
-            print(f"\n=== 最终χ²统计结果 ===")
-            print(f"视电阻率 χ² RMS: {final_chi2['rho_chi2_rms']:.3f}")
-            print(f"相位 χ² RMS: {final_chi2['phs_chi2_rms']:.3f}") 
-            print(f"总 χ² RMS: {final_chi2['total_chi2_rms']:.3f}")
+            print(f"\n=== Final χ² statistics ===")
+            print(f"Apparent resistivity χ² RMS: {final_chi2['rho_chi2_rms']:.3f}")
+            print(f"Phase χ² RMS: {final_chi2['phs_chi2_rms']:.3f}") 
+            print(f"Total χ² RMS: {final_chi2['total_chi2_rms']:.3f}")
             
             total_chi2 = final_chi2['total_chi2_rms']
             if 0.8 <= total_chi2 <= 1.2:
-                print("优秀拟合：χ² ≈ 1.0，模型在误差范围内完美拟合数据")
+                print("Excellent fit: χ² ≈ 1.0, the model fits the data within the error bars")
             elif total_chi2 > 1.5:
-                print("拟合不足：χ² > 1.5，模型未能充分拟合数据")
+                print("Underfitting: χ² > 1.5, the model does not fit the data well enough")
             elif total_chi2 < 0.5:
-                print("过度拟合：χ² < 0.5，模型可能拟合了噪声")
+                print("Overfitting: χ² < 0.5, the model may be fitting noise")
         
         print(f"\nInversion finished. Total time: {total_time:.2f}s ({total_time/60:.2f}min), "
             f"Average epoch time: {avg_epoch_time:.3f}s")
         
         final_sig = torch.exp(self.log_sig_inv).detach().cpu().numpy()
 
-        print(f"\n=== 最终结果 ===")
+        print(f"\n=== Final results ===")
         print(f"True dz: {self.true_dz.cpu().numpy().tolist()}")
         print(f"True sig: {self.true_sig.cpu().numpy().tolist()}")
         print(f"Inverted sig: {final_sig.tolist()}")
 
         return self.loss_history
-    # 文件：src/mt1d_inv/MTinv.py
+    # File: src/mt1d_inv/MTinv.py
     def setup_constraints(self, 
                      constraint_type: str = 'roughness',
                      use_occam_constraint: bool = True,
                      ref_weight: float = 0.0,
                      reference_sig: Optional[torch.Tensor] = None):
         """
-        设置反演约束条件
+        Set inversion constraints
         """
         self.use_occam_constraint = use_occam_constraint
         self.constraint_type = constraint_type
         self.ref_weight = ref_weight
         
-        # reference_sig 的处理
+        # Handle reference_sig
         if reference_sig is None:
             self.reference_sig = torch.exp(self.log_sig_inv).clone().detach() if self.log_sig_inv is not None else None
         else:
@@ -946,24 +947,24 @@ class MT1DInverter:
 
     def calculate_sensitivity_matrix(self) -> Tuple[np.ndarray, np.ndarray]:
         """
-        计算全归一化灵敏度矩阵 (Jacobian)
+        Compute the fully normalized sensitivity matrix (Jacobian)
         
-        标准化公式: J_ij = ∂(log10(ρ_i)) / ∂(log10(σ_j))
-        物理含义：电阻率变化 1 个数量级会导致视电阻率变化多少个数量级。
+        Normalization: J_ij = ∂(log10(ρ_i)) / ∂(log10(σ_j))
+        Physical meaning: how many orders of magnitude apparent resistivity changes when resistivity changes by 1 order of magnitude.
         
         Returns:
-            J (np.ndarray): 灵敏度矩阵 [n_freq, n_layer]
-            z_grid (np.ndarray): 深度网格节点 (用于绘图x轴)
+            J (np.ndarray): sensitivity matrix [n_freq, n_layer]
+            z_grid (np.ndarray): depth-grid nodes (x-axis for plotting)
         """
-        # 常数 ln(10) 用于链式法则转换
+        # Constant ln(10) for the chain-rule conversion
         LN_10 = math.log(10.0)
         
-        # 1. 准备需计算梯度的参数（对数参数化，统一用 log_sig_inv）
+        # 1. Prepare parameters for which gradients are needed (log parameterization, always use log_sig_inv)
         sig_inv = self.log_sig_inv.detach().clone().requires_grad_(True)
-        # 2. 前向计算：电导率 = exp(log_sig_inv)
+        # 2. Forward: conductivity = exp(log_sig_inv)
         _, rho_pred, _ = self.mt1d_forward(self.freq, self.dz_inv, torch.exp(sig_inv))
         
-        # 3. 逐频点求导
+        # 3. Differentiate frequency by frequency
         target = torch.log10(rho_pred)
         n_data = len(target)
         n_param = len(sig_inv)
@@ -976,15 +977,15 @@ class MT1DInverter:
             else:
                 grad = torch.autograd.grad(target[i], sig_inv, retain_graph=True)[0]
             
-            # --- 归一化：d(log10_rho)/d(log10_sig) = d(log10_rho)/d(log_sig) * ln(10) ---
+            # --- Normalize: d(log10_rho)/d(log10_sig) = d(log10_rho)/d(log_sig) * ln(10) ---
             grad = grad * LN_10
             J[i, :] = grad
             
         return J.detach().cpu().numpy(), np.concatenate(([0], np.cumsum(self.dz_inv.detach().cpu().numpy())))
         
-    # 其他绘图方法保持不变...
+    # Other plotting methods remain unchanged...
     def plot_synthetic_data(self) -> None:
-        """绘制合成数据图"""
+        """Plot synthetic data"""
         freq_np = self.freq.cpu().numpy()
         rho_np = self.rho.cpu().numpy()
         phs_np = self.phs.cpu().numpy()
@@ -1013,13 +1014,13 @@ class MT1DInverter:
         plt.show()
 
     def plot_data_fit(self) -> plt.Figure:
-        """绘制数据拟合图"""
+        """Plot data fit"""
         with torch.no_grad():
             sig_raw = torch.exp(self.log_sig_inv)
             zxy_final_pred, rho_final_pred, phs_final_pred = self.mt1d_forward(
                 self.freq, self.dz_inv, sig_raw)
         
-        # 计算全面的RMS指标
+        # Compute comprehensive RMS metrics
         rms_results = self.calculate_chi2_rms()
         
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
@@ -1030,7 +1031,7 @@ class MT1DInverter:
         phs_obs_np = self.phs_obs.cpu().numpy()
         phs_pred_np = phs_final_pred.cpu().numpy()
         
-        # 视电阻率子图
+        # Apparent-resistivity subplot
         ax1.loglog(freq_np, rho_obs_np, 'ro', markersize=4, label='Observed', alpha=0.7)
         ax1.loglog(freq_np, rho_pred_np, 'b-', linewidth=2, label='Predicted')
         ax1.set_xlabel('Frequency (Hz)', fontsize=12)
@@ -1039,7 +1040,7 @@ class MT1DInverter:
         ax1.grid(True, which="both", linestyle='--', alpha=0.5)
         ax1.set_title(f'Apparent Resistivity Fit\nχ² RMS = {rms_results["rho_chi2_rms"]:.3f}', fontsize=13)
         
-        # 相位子图
+        # Phase subplot
         ax2.semilogx(freq_np, phs_obs_np, 'ro', markersize=4, label='Observed', alpha=0.7)
         ax2.semilogx(freq_np, phs_pred_np, 'b-', linewidth=2, label='Predicted')
         ax2.set_xlabel('Frequency (Hz)', fontsize=12)
@@ -1053,13 +1054,13 @@ class MT1DInverter:
 
     def plot_loss_history(self, target_misfit: float = 1.0) -> plt.Figure:
         """
-        绘制反演过程中的损失、卡方与 lambda 演化曲线。
-        横坐标为总迭代次数 (epoch)。
+        Plot loss, chi-squared, and lambda evolution during inversion.
+        The x-axis is the total iteration count (epoch).
         """
         if not self.loss_history:
-            print("没有找到损失历史记录，请先运行 run_inversion。")
+            print("No loss history found; run run_inversion first.")
             return None
-        # 兼容旧版：若为标量列表则无 misfit/lambda
+        # Backward compatible: a list of scalars has no misfit/lambda
         first = self.loss_history[0]
         if isinstance(first, (int, float)):
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -1078,7 +1079,7 @@ class MT1DInverter:
         data_loss = [log['data_loss'] for log in self.loss_history]
         model_loss = [log['model_loss'] for log in self.loss_history]
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        # 图1: 数据拟合 RMS (χ²)
+        # Panel 1: data-fit RMS (χ²)
         axes[0].plot(epochs, misfit, 'b-', linewidth=2, label='RMS χ²')
         axes[0].axhline(y=target_misfit, color='r', linestyle='--', label='Target')
         axes[0].set_title("Data Misfit (χ² RMS)")
@@ -1087,7 +1088,7 @@ class MT1DInverter:
         axes[0].set_yscale('log')
         axes[0].grid(True, which="both", ls="-", alpha=0.5)
         axes[0].legend()
-        # 图2: Data Loss vs Model Loss
+        # Panel 2: Data Loss vs Model Loss
         ax2_twin = axes[1].twinx()
         p1, = axes[1].plot(epochs, data_loss, 'c-', label='Data Loss')
         p2, = ax2_twin.plot(epochs, model_loss, 'm-', label='Model (Roughness)')
@@ -1098,7 +1099,7 @@ class MT1DInverter:
         ax2_twin.set_ylabel("Model Loss", color='m')
         axes[1].legend(handles=[p1, p2])
         axes[1].grid(True, alpha=0.3)
-        # 图3: Lambda
+        # Panel 3: Lambda
         axes[2].plot(epochs, lambdas, 'g-', linewidth=2)
         axes[2].set_title("Regularization (Lambda)")
         axes[2].set_xlabel("Epoch")
@@ -1109,13 +1110,13 @@ class MT1DInverter:
         return fig
 
     def plot_gradient_history(self) -> plt.Figure:
-        """绘制数据项和模型项梯度范数随总迭代次数的变化。"""
+        """Plot data-term and model-term gradient norms vs total iteration count."""
         if not self.loss_history:
-            print("没有找到损失历史记录，请先运行 run_inversion。")
+            print("No loss history found; run run_inversion first.")
             return None
         first = self.loss_history[0]
         if isinstance(first, (int, float)) or 'grad_data_norm' not in first or 'grad_model_norm' not in first:
-            print("当前 loss_history 中无梯度范数，请用最新版 run_inversion 重新反演。")
+            print("Current loss_history has no gradient norms; re-run inversion with the latest run_inversion.")
             return None
         epochs = [log['epoch'] for log in self.loss_history]
         g_d = [log['grad_data_norm'] for log in self.loss_history]
@@ -1133,7 +1134,7 @@ class MT1DInverter:
         return fig
 
     def plot_model_comparison(self) -> plt.Figure:
-        """绘制模型对比图"""
+        """Plot model comparison"""
         inv_sig = torch.exp(self.log_sig_inv).detach().cpu().numpy()
         
         true_sig_np = self.true_sig.cpu().numpy()
@@ -1141,7 +1142,7 @@ class MT1DInverter:
         inv_dz_np = self.dz_inv.detach().cpu().numpy()
         
         def create_model_profile(dz, sig):
-            """创建模型的深度-电阻率剖面"""
+            """Create a depth–resistivity profile of the model"""
             if len(dz) == 0 or len(sig) == 0:
                 return [], []
                 
@@ -1181,18 +1182,18 @@ class MT1DInverter:
         plt.tick_params(axis='both', which='major', labelsize=15)
         plt.gca().invert_yaxis()
         
-        # 去掉大标题，不使用 plt.title()
+        # Drop the main title; do not call plt.title()
         
         plt.tight_layout()
         return plt.gcf()
 
 
     def plot_chi2_history(self) -> plt.Figure:
-        """绘制χ²历史图，横坐标为总迭代次数。"""
+        """Plot χ² history; the x-axis is the total iteration count."""
         if not self.chi2_history:
             print("Warning: No χ² history available")
             return None
-        # 若为带 epoch 的 dict（print_interval 采样）
+        # If entries are dicts with epoch (sampled at print_interval)
         first = self.chi2_history[0]
         if isinstance(first, dict) and 'epoch' in first:
             epochs = [h['epoch'] for h in self.chi2_history]
@@ -1206,7 +1207,7 @@ class MT1DInverter:
         ax.plot(epochs, phs_chi2, 'g-', linewidth=2, label='Phase χ² RMS')
         ax.plot(epochs, total_chi2, 'b-', linewidth=3, label='Total χ² RMS')
         
-        # 添加理想拟合线
+        # Ideal-fit line
         ax.axhline(y=1.0, color='k', linestyle='--', alpha=0.7, label='Ideal Fit (χ²=1)')
         
         ax.set_xlabel('Epoch', fontsize=12)
@@ -1219,16 +1220,16 @@ class MT1DInverter:
         return fig
 
     def plot_sensitivity(self) -> None:
-        """绘制灵敏度矩阵热力图（仅显示一次，不返回 fig 避免 Jupyter 重复输出）"""
+        """Plot a sensitivity-matrix heatmap (show once; do not return fig, to avoid duplicate Jupyter output)"""
         J, z_grid = self.calculate_sensitivity_matrix()
         
         fig, ax = plt.subplots(figsize=(8, 6))
         
-        # 绘制热力图
-        # X轴: 频率索引 (从高频到低频)
-        # Y轴: 层深度
+        # Heatmap
+        # X-axis: frequency index (high frequency to low frequency)
+        # Y-axis: layer depth
         
-        # 为了绘图方便，通常转置一下：行是深度，列是频率
+        # For plotting convenience, typically transpose: rows are depth, columns are frequency
         im = ax.imshow(J.T, aspect='auto', cmap='RdBu_r',
                        interpolation='nearest', origin='upper',
                        extent=[np.log10(self.freq[-1].item()), np.log10(self.freq[0].item()), z_grid[-1], 0])

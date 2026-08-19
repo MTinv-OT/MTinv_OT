@@ -1,7 +1,7 @@
 """
-数据存储模块 - 统一实验结果保存
+Unified experiment-result storage.
 
-用法:
+Usage:
     from mt2d_inv.io.experiment import ExperimentLogger
 
     logger = ExperimentLogger(
@@ -9,10 +9,10 @@
         output_root=Path(__file__).parent
     )
 
-    # 反演完成后
+    # After inversion
     logger.save_from_inverter(inv)
     
-    # 或指定 run_name
+    # Or with an explicit run_name
     logger.save_from_inverter(inv, run_name="test_001")
 """
 
@@ -24,8 +24,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
 import warnings
+import inspect
 
-# 尝试导入 matplotlib
+# Try importing matplotlib
 try:
     import matplotlib.pyplot as plt
     HAS_MPL = True
@@ -35,9 +36,9 @@ except ImportError:
 
 class ExperimentLogger:
     """
-    实验结果日志记录器
+    Experiment-result logger.
     
-    目录结构:
+    Directory layout:
         output_root/
         └── model_tag/
             └── 2026-06-18_10-21-33_0/
@@ -74,7 +75,7 @@ class ExperimentLogger:
             self.base_dir.mkdir(parents=True, exist_ok=True)
     
     def _generate_run_dir(self, run_name: Optional[str] = None) -> Path:
-        """生成运行目录"""
+        """Create the run directory."""
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         
         if run_name is None:
@@ -88,7 +89,7 @@ class ExperimentLogger:
         return run_dir
     
     def _extract_summary(self, inv, run_name: str, timestamp: str, run_dir: Path) -> Dict[str, Any]:
-        """提取 summary.csv 数据"""
+        """Extract summary.csv fields."""
         h = pd.DataFrame(inv.loss_history)
         p = inv.time_stats.get("profile", {})
         
@@ -115,18 +116,18 @@ class ExperimentLogger:
                 row["mape"] = recovery.get("mape", np.nan)
                 row["correlation"] = recovery.get("correlation", np.nan)
                 row["ssim"] = recovery.get("ssim", np.nan)
-                row["anomaly_rmse"] = recovery.get("anomaly_rmse", np.nan)   # ← 新增
-                row["anomaly_mape"] = recovery.get("anomaly_mape", np.nan)   # ← 新增
+                row["anomaly_rmse"] = recovery.get("anomaly_rmse", np.nan)   # added
+                row["anomaly_mape"] = recovery.get("anomaly_mape", np.nan)   # added
             except Exception as e:
-                print(f"计算恢复率时报错了: {e}")
-        # 显存
+                print(f"Error computing recovery metrics: {e}")
+        # GPU memory
         if str(inv.device).startswith("cuda"):
             try:
                 row["peak_gpu_mem_GB"] = float(torch.cuda.max_memory_allocated(inv.device) / 1024**3)
             except:
                 row["peak_gpu_mem_GB"] = np.nan
         
-        # 恢复率
+        # Recovery metrics
         if hasattr(inv, 'compute_recovery_rate'):
             try:
                 recovery = inv.compute_recovery_rate()
@@ -171,7 +172,7 @@ class ExperimentLogger:
         return value
 
     def _extract_static_shift_info(self, inv) -> Dict[str, Any]:
-        """提取静位移配置及随机生成的系数。"""
+        """Extract static-shift settings and the realized coefficients."""
         n_station = len(inv.stations) if hasattr(inv, "stations") else None
         shift_ids = getattr(inv, "shift_station_ids", None) or []
 
@@ -188,7 +189,7 @@ class ExperimentLogger:
             "shift_station_positions_m": None,
             "shift_factors": {},
             "shift_log10": {},
-            # 如果使用了固定强度接口，这里会记录用户传入的规格
+            # If the fixed-strength interface was used, record the user-supplied spec
             "static_shift_log_input": None,
         }
 
@@ -206,7 +207,7 @@ class ExperimentLogger:
             if mode in logs:
                 info["shift_log10"][mode] = self._to_serializable(logs[mode])
 
-        # 记录固定静位移输入规格（如果有）
+        # Record the fixed static-shift input spec, if any
         fixed_in = getattr(inv, "static_shift_log_input", None)
         if fixed_in is not None:
             info["static_shift_log_input"] = self._to_serializable(fixed_in)
@@ -214,7 +215,7 @@ class ExperimentLogger:
         return info
 
     def _save_apparent_resistivity(self, inv, run_dir: Path, verbose: bool = True) -> bool:
-        """保存各频点视电阻率/相位，供后续重新绘图。"""
+        """Save apparent resistivity/phase at each frequency for later replotting."""
         arrays: Dict[str, Any] = {}
 
         if hasattr(inv, "freqs"):
@@ -257,40 +258,40 @@ class ExperimentLogger:
         return True
         
     def _extract_config(self, inv) -> Dict[str, Any]:
-        """提取 config.json 数据"""
+        """Extract config.json fields."""
         config = {}
         
-        # 1) 反演运行参数 (_last_run_config)
+        # 1) Inversion run parameters (_last_run_config)
         last_run_config = getattr(inv, "_last_run_config", {})
         if last_run_config:
             config.update(last_run_config)
         
-        # 2) 网格参数
+        # 2) Grid parameters
         config["nza"] = getattr(inv, "nza", None)
         config["ny"] = len(inv.yn) - 1 if hasattr(inv, "yn") else None
         config["nz"] = len(inv.zn) - 1 if hasattr(inv, "zn") else None
         
-        # 3) 观测系统
+        # 3) Survey geometry
         config["n_freqs"] = len(inv.freqs) if hasattr(inv, "freqs") else None
         config["n_stations"] = len(inv.stations) if hasattr(inv, "stations") else None
         config["device"] = str(getattr(inv, "device", "cpu"))
         
-        # 4) 反演权重
+        # 4) Inversion weights
         config["te_weight"] = getattr(inv, "te_weight", None)
         config["tm_weight"] = getattr(inv, "tm_weight", None)
         config["data_loss_scale"] = getattr(inv, "data_loss_scale", None)
         
-        # 5) 噪声参数
+        # 5) Noise parameters
         config["noise_level"] = getattr(inv, "noise_level", None)
         config["noise_floor"] = getattr(inv, "noise_floor", None)
 
-        # 6) 静位移参数
+        # 6) Static-shift parameters
         config["static_shift"] = self._extract_static_shift_info(inv)
 
         return config
     
     def _extract_meta(self, inv, run_name: str, timestamp: str) -> Dict[str, Any]:
-        """提取 meta.json 数据"""
+        """Extract meta.json fields."""
         meta = {
             "model_tag": self.model_tag,
             "run_name": run_name,
@@ -298,7 +299,7 @@ class ExperimentLogger:
             "mode": getattr(inv, "_last_inversion_mode", "unknown"),
         }
         
-        # OT 配置
+        # OT config
         ot_config = getattr(inv, "ot_config", {})
         if ot_config:
             meta["ot_config"] = {
@@ -310,7 +311,7 @@ class ExperimentLogger:
                 "sigma_6d": ot_config.get("sigma_6d"),
             }
         
-        # 加权成本配置
+        # Weighted-cost config
         cost_weights = getattr(inv, "_cost_weights", None)
         if cost_weights:
             meta["cost_weights"] = {
@@ -332,7 +333,7 @@ class ExperimentLogger:
         return meta
     
     def _save_figures(self, inv, run_dir: Path, plot_kwargs: Optional[Dict] = None):
-        """保存所有图片到 figures/ 子目录"""
+        """Save all figures under the figures/ subdirectory."""
         if not HAS_MPL:
             print("Warning: matplotlib not available, skipping plots")
             return
@@ -341,7 +342,7 @@ class ExperimentLogger:
         figures_dir = run_dir / "figures"
         figures_dir.mkdir(exist_ok=True)
         
-        # 保存原始 plt.show（移到 try 块之前，确保 finally 能访问）
+        # Keep the original plt.show (before try so finally can restore it)
         original_show = plt.show
         
         try:
@@ -369,6 +370,7 @@ class ExperimentLogger:
             plt.suptitle('Inversion Convergence', fontsize=14)
             plt.tight_layout()
             fig.savefig(figures_dir / "loss_curves.png", dpi=300, bbox_inches='tight')
+            fig.savefig(figures_dir / "loss_curves.pdf", bbox_inches='tight')
             plt.close(fig)
             
             # 2) gradient_history.png
@@ -388,29 +390,84 @@ class ExperimentLogger:
                 ax.legend()
                 plt.tight_layout()
                 fig.savefig(figures_dir / "gradient_history.png", dpi=300, bbox_inches='tight')
+                fig.savefig(figures_dir / "gradient_history.pdf", bbox_inches='tight')
                 plt.close(fig)
             
-            # 3) 使用 inv 的绘图函数，禁用 plt.show()
+            # 3) Use inv plotting helpers with plt.show() disabled
             plt.show = lambda: None
 
-            def _save_plot_fig(fig, filename: str):
-                if fig is not None and fig.get_axes():
-                    fig.savefig(figures_dir / filename, dpi=300, bbox_inches='tight')
-                    plt.close(fig)
-            
-            if hasattr(inv, 'sig_true') and inv.sig_true is not None:
-                try:
-                    fig = inv.plot_model_comparison(**plot_kwargs)
-                    _save_plot_fig(fig, "model_comparison.png")
-                except Exception as e:
-                    print(f"Warning: model_comparison plot failed: {e}")
-            
+            def _save_plot_fig(fig, base_name: str) -> bool:
+                """Save both PNG and PDF and return whether the save succeeded."""
+                if fig is None or not fig.get_axes():
+                    return False
+                fig.savefig(figures_dir / f"{base_name}.png", dpi=300, bbox_inches='tight')
+                fig.savefig(figures_dir / f"{base_name}.pdf", bbox_inches='tight')
+                plt.close(fig)
+                print(f"  ✓ {base_name}.png/.pdf")
+                return True
+
+            def _plot_kwargs_for(plot_func, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                """Pass only kwargs accepted by the target plot function to avoid TypeError from a shared plot_kwargs."""
+                candidate = dict(plot_kwargs)
+                if extra:
+                    candidate.update(extra)
+                signature = inspect.signature(plot_func)
+                accepted = {
+                    name
+                    for name, param in signature.parameters.items()
+                    if name != "inv" and param.kind != inspect.Parameter.VAR_POSITIONAL
+                }
+                filtered = {key: value for key, value in candidate.items() if key in accepted}
+                ignored = sorted(set(candidate) - set(filtered))
+                if ignored:
+                    print(
+                        f"  Note: ignored unsupported kwargs for {plot_func.__name__}: "
+                        + ", ".join(ignored)
+                    )
+                return filtered
+
+            # Field data has no sig_true, but plot_model_comparison can draw the inverted model alone.
+            # Do not gate this figure on whether sig_true exists.
+            try:
+                from ..plotting.inversion import plot_model_comparison as _plot_model_comparison
+
+                model_plot_defaults: Dict[str, Any] = {}
+                has_true_model = (
+                    hasattr(inv, "sig_true")
+                    and getattr(inv, "sig_true") is not None
+                )
+                if not has_true_model and "clip_to_stations" not in plot_kwargs:
+                    # Field profiles default to clipping to the station span so the default [-20, 20] km does not fall outside the grid.
+                    model_plot_defaults["clip_to_stations"] = True
+                model_kw = _plot_kwargs_for(_plot_model_comparison, model_plot_defaults)
+                fig = inv.plot_model_comparison(**model_kw)
+                if not _save_plot_fig(fig, "model_comparison"):
+                    print("Warning: model_comparison returned no valid figure")
+            except Exception as e:
+                print(f"Warning: model_comparison plot failed: {type(e).__name__}: {e}")
+
             if hasattr(inv, 'initial_model_sigma') and inv.initial_model_sigma is not None:
                 try:
-                    fig = inv.plot_initial_model(show=False, **plot_kwargs)
-                    _save_plot_fig(fig, "initial_model.png")
+                    from ..plotting.inversion import plot_initial_model as _plot_initial_model
+
+                    initial_plot_defaults: Dict[str, Any] = {"show": False}
+                    has_true_model = (
+                        hasattr(inv, "sig_true")
+                        and getattr(inv, "sig_true") is not None
+                    )
+                    if not has_true_model and "clip_to_stations" not in plot_kwargs:
+                        initial_plot_defaults["clip_to_stations"] = True
+                    initial_kw = _plot_kwargs_for(_plot_initial_model, initial_plot_defaults)
+                    fig = inv.plot_initial_model(**initial_kw)
+                    if not _save_plot_fig(fig, "initial_model"):
+                        print("Warning: initial_model returned no valid figure")
                 except Exception as e:
-                    print(f"Warning: initial_model plot failed: {e}")
+                    print(f"Warning: initial_model plot failed: {type(e).__name__}: {e}")
+            else:
+                print(
+                    "Warning: initial_model plot skipped because inv.initial_model_sigma is None. "
+                    "Call initialize_model() before inversion."
+                )
             
             try:
                 fit_kw: Dict[str, Any] = {"show": False}
@@ -438,11 +495,12 @@ class ExperimentLogger:
                 for fig_idx, fig in enumerate(figs):
                     batch = station_indices[fig_idx * batch_size : (fig_idx + 1) * batch_size]
                     if batch_size == 1 and len(batch) == 1:
-                        out_name = f"station_{batch[0]:02d}.png"
+                        base_name = f"station_{batch[0]:02d}"
                     else:
-                        out_name = f"batch_{fig_idx:03d}.png"
+                        base_name = f"batch_{fig_idx:03d}"
                     if fig is not None and fig.get_axes():
-                        fig.savefig(df_dir / out_name, dpi=300, bbox_inches="tight")
+                        fig.savefig(df_dir / f"{base_name}.png", dpi=300, bbox_inches="tight")
+                        fig.savefig(df_dir / f"{base_name}.pdf", bbox_inches="tight")
                         plt.close(fig)
                         n_saved += 1
                 print(
@@ -454,7 +512,7 @@ class ExperimentLogger:
             
             try:
                 fig = inv.plot_1d_profiles(depth_limit_km=50)
-                _save_plot_fig(fig, "profiles_1d.png")
+                _save_plot_fig(fig, "profiles_1d")
             except Exception as e:
                 print(f"Warning: profiles_1d plot failed: {e}")
             
@@ -463,7 +521,7 @@ class ExperimentLogger:
         except Exception as e:
             print(f"Warning: Error saving figures: {e}")
         finally:
-            # 恢复原始 plt.show
+            # Restore original plt.show
             plt.show = original_show
     
     def save_from_inverter(
@@ -474,13 +532,13 @@ class ExperimentLogger:
         plot_kwargs: Optional[Dict] = None,
         verbose: bool = True,
     ) -> Path:
-        """从反演器保存所有结果"""
+        """Save all results from an inverter."""
         
-        # 1) 先检查是否有损失历史（放在最前面）
+        # 1) Check loss history first
         if not hasattr(inv, 'loss_history') or len(inv.loss_history) == 0:
             raise ValueError("inv.loss_history is empty. Run inversion first.")
         
-        # 2) 生成目录
+        # 2) Create the run directory
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if run_name is None:
             existing = list(self.base_dir.glob(f"{timestamp}_*"))
@@ -577,20 +635,20 @@ class ExperimentLogger:
         return run_dir
 
 
-# ==================== 向后兼容的函数接口 ====================
+# ==================== Backward-compatible function API ====================
 
 def save_inversion_results(
     inverter,
     model_name: str,
     run_name: Optional[str] = None,
-    save_dir_name: str = "实验结果",
+    save_dir_name: str = "results",
     save_plots: bool = True,
     plot_kwargs: Optional[Dict] = None,
     save_model: bool = True,
     save_params: bool = True,
     verbose: bool = True,
 ) -> Path:
-    """向后兼容的旧接口"""
+    """Backward-compatible legacy interface."""
     logger = ExperimentLogger(
         model_tag=model_name,
         output_root=Path.cwd() / save_dir_name,
@@ -608,12 +666,12 @@ def save_multiple_runs(
     inverter_list: List,
     model_name: str,
     run_names: Optional[List[str]] = None,
-    save_dir_name: str = "实验结果",
+    save_dir_name: str = "results",
     save_plots: bool = True,
     plot_kwargs: Optional[Dict] = None,
     verbose: bool = True,
 ) -> List[Path]:
-    """向后兼容的旧接口"""
+    """Backward-compatible legacy interface."""
     logger = ExperimentLogger(
         model_tag=model_name,
         output_root=Path.cwd() / save_dir_name,
@@ -640,7 +698,7 @@ def save_multiple_runs(
 
 
 def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
-    """自动找最新的 checkpoint"""
+    """Find the latest checkpoint automatically."""
     checkpoint_dir = Path(checkpoint_dir)
     if not checkpoint_dir.exists():
         return None
@@ -658,22 +716,22 @@ def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
     return str(max(checkpoints, key=get_epoch_num))
 
 
-# ==================== Checkpoint 保存方法（作为独立函数） ====================
+# ==================== Checkpoint save helper (standalone function) ====================
 
 def save_checkpoint(inv, optimizer, epoch: int, checkpoint_dir: Path) -> None:
     """
-    保存 checkpoint（独立函数，非类方法）
+    Save a checkpoint (standalone function, not a class method).
     
     Parameters
     ----------
     inv : MT2DInverter
-        反演器对象
+        Inverter object
     optimizer : torch.optim.Optimizer
-        优化器对象
+        Optimizer object
     epoch : int
-        当前 epoch 编号
+        Current epoch index
     checkpoint_dir : Path
-        保存目录
+        Directory to write to
     """
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)

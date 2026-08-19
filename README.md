@@ -34,7 +34,7 @@ src/
 │
 └── mt2d_inv/
     ├── __init__.py              # Public API
-    ├── models.py                # MT2DTrueModels (COMMEMI, Rubic, ...)
+    ├── models.py                # MT2DTrueModels (COMMEMI, checkerboard, ...)
     ├── constraints.py           # 2D smoothness / roughness constraints
     ├── optimizer.py             # OptimizerConfig
     │
@@ -218,35 +218,45 @@ Static-shift settings are written to `static_shift.json`; recovery metrics (incl
 
 ## Experiment notebooks
 
-Notebooks under `tests/` are organized by experiment type.
+Notebooks under `tests/` locate the project root automatically. Synthetic runs invert **6D OT** (`mode="6dot"`) and/or **MSE** (`mode="mse"`). Field notebooks expect EDI files next to the notebook (or in the folder named in `EDI_DIR`).
 
-### Synthetic experiments — `tests/synthetic/`
+### Convergence — `tests/synthetic/convergence/`
 
-COMMEMI 2D-1 / 2D-4 and Rubic models; OT (`6dot`) vs MSE; random static shift.
+Same synthetic observations inverted with OT then MSE; overlay RMS χ² curves. COMMEMI 2D-1 / 2D-4, 21 stations, 1% Gaussian noise.
 
-| Notebook | Model | Static shift |
-|----------|------|--------|
-| `commemi_2d1_21_shift*.ipynb` | COMMEMI 2D-1, 21 stations | random (`shift_ratio` = 0 / 0.1 / 0.15 / 0.2) |
-| `commemi_2d4_21_shift*.ipynb` | COMMEMI 2D-4, 21 stations | same |
-| `rubic_ot_21.ipynb` / `rubic_mse_21.ipynb` | Rubic, 21 stations | random |
-| `rubic_ot_31.ipynb` / `rubic_mse_31.ipynb` | Rubic, 31 stations | random |
-
-### Fixed static-shift comparison — `tests/synthetic/shift_compare/`
-
-Uses `static_shift_log` to compare TE/TM static-shift effects (3 scenarios each for COMMEMI 2D-1 and 2D-4):
-
-| Notebook | Scenario |
+| Notebook | Model |
 |----------|------|
-| `*_static_te_only.ipynb` | TE (xy) only |
-| `*_static_tm_only.ipynb` | TM (yx) only |
-| `*_static_both_same.ipynb` | Same fixed static shift on TE and TM |
+| `commemi_2d1_21-ot-mse-noise0.01.ipynb` | COMMEMI 2D-1 |
+| `commemi_2d4_21-ot-mse-noise0.01.ipynb` | COMMEMI 2D-4 |
 
-### Field-data experiments
+### Noise comparison — `tests/synthetic/noise_compare/`
 
-| Directory | Description |
-|------|------|
-| `tests/AKBST-AMT-L08/` | AKBST AMT profile; MSE / TE5 OT inversion |
-| `tests/Cascadia/` | Cascadia profile; 6dot TE/TM weight comparison |
+Separate OT and MSE notebooks at Gaussian impedance noise 1%, 2%, and 4% (`noise_level` = 0.01 / 0.02 / 0.04). 21 stations.
+
+| Notebook pattern | Model | Mode |
+|----------|------|------|
+| `commemi_2d1_21-{ot,mse}-0.01.ipynb` (also `0.02`, `0.04`) | COMMEMI 2D-1 | OT or MSE |
+| `commemi_2d4_21-{ot,mse}-0.01.ipynb` (also `0.02`, `0.04`) | COMMEMI 2D-4 | OT or MSE |
+
+### Random static shift — `tests/synthetic/random_static/`
+
+Random log10 static shift (`static_shift_std=0.15`) on a fraction of stations (`shift_ratio`). OT and MSE share the same `obs_data`. 21 stations.
+
+| Notebook | Model | `shift_ratio` |
+|----------|------|--------|
+| `commemi_2d1_21_shift-0.1.ipynb` | COMMEMI 2D-1 | 0.1 |
+| `commemi_2d1_21_shift-0.15.ipynb` | COMMEMI 2D-1 | 0.15 |
+| `commemi_2d1_21_shift-0.2.ipynb` | COMMEMI 2D-1 | 0.2 |
+| `commemi_2d4_21_shift-0.1.ipynb` | COMMEMI 2D-4 | 0.1 |
+| `commemi_2d4_21_shift-0.15.ipynb` | COMMEMI 2D-4 | 0.15 |
+| `commemi_2d4_21_shift-0.2.ipynb` | COMMEMI 2D-4 | 0.2 |
+
+### Field data — `tests/AKBST-AMT-L08/` and `tests/Cascadia/`
+
+| Notebook | Profile |
+|----------|------|
+| `tests/AKBST-AMT-L08/ot.ipynb`, `mse.ipynb` | AKBST AMT line L08 |
+| `tests/Cascadia/ot.ipynb`, `mse.ipynb` | Cascadia |
 
 ### Output layout
 
@@ -308,314 +318,3 @@ inv.plot_model_comparison()
 ## License
 
 This project is licensed under the MIT License. See [LICENSE.txt](LICENSE.txt).
-
-# MTinv_OT
-
-基于最优传输（Optimal Transport, OT）的 MT 1D/2D 反演与正演研究工具箱。
-
-> 在传统 MT 反演框架中，以 geomloss Sinkhorn 几何 OT 距离替代/补充经典 L2 数据拟合，提升对噪声与非高斯误差的鲁棒性。
-
-**仓库**: [https://github.com/MTinv-OT/MTinv_OT](https://github.com/MTinv-OT/MTinv_OT)
-
----
-
-## 功能概览
-
-| 模块 | 说明 |
-|------|------|
-| **MT 1D OT 反演** (`mt1d_inv`) | 一维分层模型；视电阻率/相位嵌入 3D 点云；Sinkhorn OT + Occam 约束 |
-| **MT 2D FD 正演** (`mt2d_inv.forward`) | TE/TM 总场法有限差分；PyTorch 可微；real-block 求解 |
-| **MT 2D OT 反演** (`mt2d_inv.inversion`) | 多频、多台站、四分量联合反演；3D/6D Sinkhorn OT；MSE 对比模式 |
-| **数据准备** (`mt2d_inv.data_prep`) | EDI 读取、strike 估计、剖面投影、数据清洗与导出 |
-| **实验 I/O** (`mt2d_inv.io`) | `ExperimentLogger` 统一保存 config / history / figures / metrics |
-| **绘图** (`mt2d_inv.plotting`) | 模型对比、数据拟合、伪剖面、OT vs MSE 收敛对比 |
-
----
-
-## 代码结构
-
-重构后的 `mt2d_inv` 采用 **Mixin 组合**，替代原先单文件 `MTinv_2d.py`：
-
-```
-src/
-├── mt1d_inv/                    # 1D 反演
-│   ├── MTinv.py                 # MT1DInverter
-│   ├── model.py, constraints.py, optimizer.py
-│   └── visualize.py
-│
-└── mt2d_inv/
-    ├── __init__.py              # 公开 API 入口
-    ├── models.py                # MT2DTrueModels（COMMEMI、Rubic 等标准模型）
-    ├── constraints.py           # 2D 平滑/粗糙度约束
-    ├── optimizer.py             # OptimizerConfig
-    │
-    ├── forward/
-    │   └── solver.py            # MT2DFD_Torch（2D 有限差分正演）
-    │
-    ├── inversion/               # 2D 反演核心（Mixin 组合）
-    │   ├── base.py              # MT2DInverter
-    │   ├── weighted_cost.py     # MT2DInverterWeightedCost
-    │   ├── data.py              # 合成/观测数据、静位移、误差传播
-    │   ├── ot.py                # Sinkhorn OT 数据项
-    │   ├── regularization.py    # 正则化与自适应 λ
-    │   └── metrics.py           # 恢复率 RMSE / SSIM / correlation
-    │
-    ├── data_prep/               # 实测数据准备流水线
-    │   ├── prepare.py           # PrepareData（主入口）
-    │   ├── edi.py               # EDI 解析与阻抗变换
-    │   ├── strike.py            # Strike 估计与剖面投影
-    │   ├── cleaning.py          # 数据清洗
-    │   ├── export.py            # 反演张量导出
-    │   └── grid.py              # 网格范围计算
-    │
-    ├── plotting/                # 反演结果可视化
-    │   ├── inversion.py         # 模型对比、数据拟合、剖面等
-    │   ├── pseudosection.py     # 视电阻率伪剖面
-    │   ├── comparison.py        # OT vs MSE 收敛对比
-    │   └── prepare_data.py      # 数据准备阶段绘图
-    │
-    └── io/
-        └── experiment.py        # ExperimentLogger
-```
-
-### 主要公开 API
-
-```python
-from mt2d_inv import MT2DInverter, MT2DInverterWeightedCost, MT2DFD_Torch, MT2DTrueModels
-from mt2d_inv.data_prep import PrepareData
-from mt2d_inv.io import ExperimentLogger
-from mt2d_inv.plotting import (
-    plot_model_comparison,
-    plot_data_fitting,
-    plot_ot_mse_convergence,
-    plot_ot_mse_pseudosection_from_npz,
-)
-```
-
----
-
-## 环境与依赖
-
-- Python ≥ 3.10
-- PyTorch（CPU 或 GPU）
-- numpy, matplotlib, scikit-image, pandas
-
-```bash
-pip install -e ".[ot,dev]"
-# 或分步安装
-pip install -e .
-pip install geomloss jupyter   # OT 反演与 notebook 实验
-```
-
-Windows 上若遇 OpenMP 冲突，可设置：
-
-```bash
-set KMP_DUPLICATE_LIB_OK=TRUE
-```
-
----
-
-## 安装与导入
-
-```bash
-git clone https://github.com/MTinv-OT/MTinv_OT.git
-cd MTinv_OT
-pip install -e ".[ot,dev]"
-```
-
-Notebook 中若不在项目根目录运行，需将 `src` 加入路径：
-
-```python
-import sys
-from pathlib import Path
-
-def find_project_root(start: Path) -> Path:
-    for p in [start, *start.parents]:
-        if (p / "src" / "mt2d_inv" / "__init__.py").is_file():
-            return p
-    raise RuntimeError("Cannot find project root")
-
-root = find_project_root(Path.cwd())
-if str(root) not in sys.path:
-    sys.path.insert(0, str(root))
-```
-
----
-
-## 快速上手
-
-### 2D 合成数据反演（OT vs MSE）
-
-```python
-import torch
-from mt2d_inv import MT2DInverterWeightedCost, MT2DTrueModels
-from mt2d_inv.io import ExperimentLogger
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-yn, zn, nza, sig_true = MT2DTrueModels.create_commemi_2d4(nza=10, device=device)
-freqs = torch.logspace(0, -5, 30, device=device)
-stations = torch.linspace(-15000, 15000, 21, device=device)
-
-inv = MT2DInverterWeightedCost(
-    yn=torch.tensor(yn, dtype=torch.float64, device=device),
-    zn=torch.tensor(zn, dtype=torch.float64, device=device),
-    nza=nza, freqs=freqs, stations=stations,
-    device=device, random_seed=123,
-)
-inv.set_forward_operator()
-inv.sig_true = sig_true
-inv.create_synthetic_data(noise_level=0.01, noise_type="gaussian")
-inv.initialize_model(initial_sigma=0.01)
-
-inv.run_inversion(n_epochs=300, mode="6dot")   # OT
-logger = ExperimentLogger(model_tag="demo", output_root="test_results")
-logger.save_from_inverter(inv, run_name="ot_demo")
-```
-
-### 实测数据准备（EDI → 反演张量）
-
-```python
-from mt2d_inv.data_prep import PrepareData
-
-prep = PrepareData(
-    edi_dir="path/to/edi",
-    n_freq_target=20,
-    freq_min_hz=1e-4,
-    freq_max_hz=1e4,
-)
-prep.run_all_simple(rotate=True, strike_true_deg=45.0)
-data_dict = prep.export_data_dict_for_2d_inversion()
-```
-
-### 静位移（Static Shift）
-
-合成数据支持两种静位移施加方式：
-
-**1. 随机模式（原有接口）**
-
-```python
-inv.create_synthetic_data(
-    noise_level=0.01,
-    static_shift_std=0.15,          # log10 乘子的标准差 σ（非方差）
-    shift_modes=("xy", "yx"),       # xy=TE, yx=TM
-    shift_stations="random",        # "all" | "middle" | "random"
-    shift_ratio=0.2,                # 受影响台站比例
-)
-```
-
-**2. 固定强度模式（新接口）**
-
-```python
-inv.create_synthetic_data(
-    noise_level=0.01,
-    static_shift_std=0.0,
-    shift_station_indices=[8, 9, 10, 11],   # 0-based 台站序号
-    static_shift_log={
-        "xy": 0.15,    # TE：直接 log10 乘子（×10^0.15 ≈ 1.41）
-        "yx": 0.15,    # TM：同上；可分别设置或只设其中一个
-    },
-)
-```
-
-| 参数 | 含义 |
-|------|------|
-| `static_shift_std` | 随机模式：log10 乘子的高斯 **标准差** σ |
-| `static_shift_log` | 固定模式：**直接的 log10 乘子**（非方差、非标准差） |
-| `shift_station_indices` | 显式指定受影响台站，优先级高于 `shift_stations` |
-
-静位移配置与系数会写入 `static_shift.json`，恢复率指标（含 SSIM）写入 `summary.csv`。
-
----
-
-## 实验 Notebook
-
-`tests/` 目录按实验类型组织：
-
-### 合成数据实验 — `tests/synthetic/`
-
-COMMEMI 2D-1 / 2D-4 与 Rubic 模型；OT（6dot）与 MSE 对比；随机静位移。
-
-| Notebook | 模型 | 静位移 |
-|----------|------|--------|
-| `commemi_2d1_21_shift*.ipynb` | COMMEMI 2D-1, 21 台站 | 随机（`shift_ratio` = 0 / 0.1 / 0.15 / 0.2） |
-| `commemi_2d4_21_shift*.ipynb` | COMMEMI 2D-4, 21 台站 | 同上 |
-| `rubic_ot_21.ipynb` / `rubic_mse_21.ipynb` | Rubic, 21 台站 | 随机 |
-| `rubic_ot_31.ipynb` / `rubic_mse_31.ipynb` | Rubic, 31 台站 | 随机 |
-
-### 固定静位移对比 — `tests/synthetic/shift_compare/`
-
-使用新接口 `static_shift_log`，对比 TE/TM 静位移影响（COMMEMI 2D-1 与 2D-4 各 3 种场景）：
-
-| Notebook | 场景 |
-|----------|------|
-| `*_static_te_only.ipynb` | 仅 TE (xy) 有静位移 |
-| `*_static_tm_only.ipynb` | 仅 TM (yx) 有静位移 |
-| `*_static_both_same.ipynb` | TE 与 TM 相同固定静位移 |
-
-### 实测数据实验
-
-| 目录 | 说明 |
-|------|------|
-| `tests/AKBST-AMT-L08/` | AKBST AMT 剖面数据；MSE / TE5 OT 反演 |
-| `tests/Cascadia/` | Cascadia 剖面数据；6dot TE/TM 权重对比 |
-
-### 实验结果目录结构
-
-`ExperimentLogger` 每次运行生成：
-
-```
-test_results/<model_tag>/<timestamp>_<run_name>/
-├── config.json              # 反演与静位移配置
-├── summary.csv              # RMSE, SSIM, misfit, timing 等
-├── history.csv              # 逐 epoch 损失历史
-├── static_shift.json        # 静位移参数与实际系数
-├── apparent_resistivity.npz # 各频点 ρ/φ（供伪剖面重绘）
-├── final_model.npz
-└── figures/
-    ├── model_comparison.png
-    ├── data_fitting/
-    └── ...
-```
-
----
-
-## 绘图函数速查
-
-| 函数 | 用途 |
-|------|------|
-| `plot_model_comparison(inv)` | 真/反演模型 log10(ρ) 对比；含 SSIM 打印 |
-| `plot_data_fitting(inv, station_indices=...)` | 台站数据拟合曲线 |
-| `plot_ot_mse_convergence(hist_ot, hist_mse)` | OT vs MSE 收敛对比 |
-| `plot_ot_mse_pseudosection_from_npz(npz_ot, npz_mse)` | 伪剖面对比（共享/独立色标） |
-| `plot_rho_fitting_from_npz(npz_path)` | 从保存的 npz 重绘数据拟合 |
-
-SSIM 指标：`inv.compute_recovery_rate()['ssim']` 与 `plot_model_comparison` 打印值一致（log10(ρ) 域，排除空气层），并写入 `summary.csv`。
-
----
-
-## MT 1D 反演
-
-1D 模块保持独立，入口为 `mt1d_inv`：
-
-```python
-from mt1d_inv import MT1D, MT1DInverter
-
-inv = MT1DInverter(device="cuda", use_sinkhorn=True)
-inv.generate_synthetic_data(true_dz=..., true_sig=..., noise_level=0.05)
-inv.run_inversion(num_epochs=800, use_adaptive_lambda=True)
-inv.plot_data_fit()
-inv.plot_model_comparison()
-```
-
----
-
-## 贡献者
-
-- 作者：Xinran Liu, Xuanzhang Chen, Bo Yang, Ziyu Tang
-- 联系：xinran.liu@zju.edu.cn, bo.yang@zju.edu.cn
-
----
-
-## License
-
-见仓库根目录 [LICENSE](LICENSE)。

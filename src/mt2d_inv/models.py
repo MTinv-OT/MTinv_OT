@@ -647,7 +647,7 @@ class MT2DTrueModels:
         sig_true : torch.Tensor
             Conductivity (S/m) on cell centers, shape ``(nz, ny)``.
         """
-        # 兼容 Tensor 和 Numpy
+        # Compatible with Tensor and NumPy
         zn_np = zn.cpu().numpy() if isinstance(zn, torch.Tensor) else np.asarray(zn)
         yn_np = yn.cpu().numpy() if isinstance(yn, torch.Tensor) else np.asarray(yn)
 
@@ -655,21 +655,21 @@ class MT2DTrueModels:
         y_centers = 0.5 * (yn_np[:-1] + yn_np[1:])
         Y, Z = np.meshgrid(y_centers, z_centers)
 
-        # 1. 设置背景和空气层
+        # 1. Set background and air layers
         sigma = np.ones_like(Y, dtype=float) / bg_rho
-        sigma[z_centers < 0, :] = 1e-9 # 空气层
+        sigma[z_centers < 0, :] = 1e-9 # air layers
 
-        # 2. 计算网格点所在的“块”索引
+        # 2. Block indices of each grid point
         y_idx = np.floor((Y - y_bounds[0]) / dy_block)
         z_idx = np.floor((Z - z_bounds[0]) / dz_block)
 
-        # 3. 限制棋盘格生成的物理范围
+        # 3. Restrict checkerboard generation to the physical bounds
         valid_mask = (Y >= y_bounds[0]) & (Y <= y_bounds[1]) & (Z >= z_bounds[0]) & (Z <= z_bounds[1])
 
-        # 4. 交替逻辑：利用行列索引之和的奇偶性
+        # 4. Alternating pattern from parity of row+column indices
         checker_mask = (y_idx + z_idx) % 2 == 0
 
-        # 5. 赋值交替电阻率
+        # 5. Assign alternating resistivities
         sigma[valid_mask & checker_mask] = 1.0 / rho_1
         sigma[valid_mask & ~checker_mask] = 1.0 / rho_2
 

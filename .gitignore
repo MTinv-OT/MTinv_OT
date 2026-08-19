@@ -38,3 +38,10 @@ Thumbs.db
 # Misc
 *.log
 *.bak
+
+# Experiment outputs written by notebooks
+**/test_results/
+**/test_results*/
+**/checkpoints/
+_zh_lines.txt
+**/_zh_lines.txt

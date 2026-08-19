@@ -16,7 +16,7 @@ from ..optimizer import OptimizerConfig
 from ..forward.solver import MT2DFD_Torch
 
 def log_gpu_usage() -> float:
-        """零依赖获取 GPU 算力占用率，直接调用底层 nvidia-smi"""
+        """Query GPU utilization via nvidia-smi (no extra Python deps)."""
         try:
             result = subprocess.check_output(
                 ['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'],
@@ -466,7 +466,7 @@ class MT2DInverter(
                     blur_anneal_smooth_window: int = 3,
                     # After each anneal, wait this many epochs before next anneal.
                     blur_anneal_cooldown_epochs: int = 20,
-                    resume_from: Optional[str] = None,      # checkpoint路径
+                    resume_from: Optional[str] = None,      # checkpoint path
                     checkpoint_interval: Optional[int] = None,
                     checkpoint_dir: Optional[str] = "./checkpoints",
                     ):  
@@ -493,7 +493,7 @@ class MT2DInverter(
         if self.forward_operator is None:
             raise RuntimeError("Please set the forward operator first")
 
-        self._last_inversion_mode = mode  # 供 print_ot_dimension_contributions 等检查
+        self._last_inversion_mode = mode  # used by print_ot_dimension_contributions, etc.
         
         # Timing
         total_start_time = time.time()
@@ -690,11 +690,11 @@ class MT2DInverter(
         last_g_m_norm = float("nan")
         last_ratio = float("nan")
         if resume_from is not None:
-            # 从checkpoint恢复
+            # Resume from checkpoint
             checkpoint = torch.load(resume_from, map_location=self.device)
             self.model_log_sigma.data = checkpoint['model_state']
             
-            # 恢复优化器
+            # Restore optimizer
             optimizer = self.opt_config.create_optimizer(
                 [self.model_log_sigma], 
                 lr=lr,
@@ -702,24 +702,22 @@ class MT2DInverter(
                )
             optimizer.load_state_dict(checkpoint['optimizer_state'])
             
-            # 恢复其他状态
+            # Restore remaining state
             start_epoch = checkpoint['epoch'] + 1
             self.loss_history = checkpoint.get('loss_history', [])
-            # === 利用你的思路：直接从历史记录中找回 Lambda ===
+            # Recover lambda from the last history entry
             if len(self.loss_history) > 0:
-                # 注意：你需要确认一下你的字典里存 lambda 的键叫什么（比如 'lam', 'lambda_val' 等）
-                # 这里假设键名是 'lam'
                 last_lam = self.loss_history[-1].get('lambda', current_lambda)
                 
-                # 覆盖掉主程序传入的初始大 lambda
+                # Override the initial lambda passed into run_inversion
                 current_lambda = last_lam
             
-            # 恢复随机种子
+            # Restore RNG
             torch.set_rng_state(checkpoint['rng_state'].cpu().byte())
             if torch.cuda.is_available():
                 torch.cuda.set_rng_state(checkpoint['cuda_rng_state'].cpu().byte())
         else:
-            # 全新开始
+            # Fresh start
             optimizer = self.opt_config.create_optimizer(
                 [self.model_log_sigma], 
                 lr=lr,
@@ -728,7 +726,7 @@ class MT2DInverter(
             self.loss_history = []
             start_epoch=0
             
-        # 2) 确保checkpoint目录存在
+        # Ensure checkpoint directory exists
         if checkpoint_interval is not None:
             Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
             # AdamW optimization
@@ -817,7 +815,7 @@ class MT2DInverter(
                     else:
                         p_val = pred_flat
 
-                    # 梯度只会流向有效位置 (pred_flat 从有效位置 index_select 而来)
+                    # Gradients flow only through valid entries (pred_flat is index_select'ed)
                     loss_component = torch.sum(((obs_val - p_val) * w_flat) ** 2)
                     loss_data += mode_weight * loss_component
                 loss_data = data_loss_scale * loss_data / num_data
@@ -855,10 +853,16 @@ class MT2DInverter(
                 profile_times["regularization"].append(time.time() - t0)
     
             # 4) Backprop
+            # On lambda-balance epochs, grad(Phi_d) already triggers the expensive
+            # sparse adjoint solve.  Reuse that gradient for AdamW instead of
+            # calling total_loss.backward() and solving the same adjoint again.
+            grad_data_for_step = None
+            grad_model_for_step = None
+            cached_backward_seconds = None
+
             if use_adaptive_lambda:
-                # Only compute/record lambda-update gradients on the update epoch and its
-                # two preceding epochs (fixed window=3).
-                is_update_tick = (epoch >= warmup_epochs) and ((epoch - warmup_epochs) % update_interval == 0)
+                # Compute/record lambda-balance gradients on the update epoch and
+                # its two preceding epochs (fixed smoothing window=3).
                 phases = {0}
                 if int(update_interval) >= 2:
                     phases.add(int(update_interval) - 1)
@@ -867,92 +871,149 @@ class MT2DInverter(
 
                 if compute_lambda_grads_every_epoch:
                     compute_lambda_grads = True
+                elif epoch >= warmup_epochs:
+                    phase = int((epoch - warmup_epochs) % update_interval)
+                    compute_lambda_grads = phase in phases
                 else:
-                    compute_lambda_grads = False
-                    if epoch >= warmup_epochs:
-                        phase = int((epoch - warmup_epochs) % update_interval)
-                        compute_lambda_grads = phase in phases
-                    else:
-                        # For the first update tick at epoch==warmup_epochs, also compute
-                        # gradients at epochs warmup_epochs-2 and warmup_epochs-1.
-                        compute_lambda_grads = epoch >= max(0, int(warmup_epochs) - 2)
+                    # Supply the two preceding samples for the first update tick.
+                    compute_lambda_grads = epoch >= max(0, int(warmup_epochs) - 2)
 
                 if compute_lambda_grads:
-                    proposed_lambda, g_d_norm, g_m_norm = self.update_lambda_by_gradient_balance(
+                    if profile_timing:
+                        _sync()
+                        t_lambda_grad = time.time()
+                    (
+                        proposed_lambda,
+                        g_d_norm,
+                        g_m_norm,
+                        grad_data_for_step,
+                        grad_model_for_step,
+                    ) = self.update_lambda_by_gradient_balance(
                         loss_data,
                         loss_model,
                         current_lambda,
                         alpha=alpha,
                         lambda_min=1e-6,
                         bl=bl,
+                        return_gradients=True,
+                        retain_graph=False,
                     )
+                    if profile_timing:
+                        _sync()
+                        cached_backward_seconds = time.time() - t_lambda_grad
+
                     last_g_d_norm = float(g_d_norm)
                     last_g_m_norm = float(g_m_norm)
-                    last_ratio = float(self.ratio_history[-1]) if getattr(self, "ratio_history", None) else float("nan")
+                    last_ratio = (
+                        float(self.ratio_history[-1])
+                        if getattr(self, "ratio_history", None)
+                        else float("nan")
+                    )
                 else:
                     proposed_lambda = current_lambda
                     g_d_norm = float("nan")
                     g_m_norm = float("nan")
-                # 2) Decide whether to apply the update (using the passed-in schedule)
+
                 is_warmup = epoch < warmup_epochs
-                is_update_tick = (epoch >= warmup_epochs) and ((epoch - warmup_epochs) % update_interval == 0)
-                
+                is_update_tick = (
+                    epoch >= warmup_epochs
+                    and ((epoch - warmup_epochs) % update_interval == 0)
+                )
                 if not is_warmup and is_update_tick:
-                # Only consider updates after warmup and on scheduled ticks
-                    if abs(proposed_lambda - current_lambda) / current_lambda > 0.05:
-                        ratio_last = last_ratio
+                    rel_change = abs(proposed_lambda - current_lambda) / max(
+                        abs(float(current_lambda)), 1e-30
+                    )
+                    if rel_change > 0.05:
                         print(
-                            f" [Auto-Lambda] Epoch {epoch}: Adjusted {current_lambda:.2e} -> {proposed_lambda:.2e} "
-                            f"(ratio={ratio_last:.3e})"
+                            f" [Auto-Lambda] Epoch {epoch}: Adjusted "
+                            f"{current_lambda:.2e} -> {proposed_lambda:.2e} "
+                            f"(ratio={last_ratio:.3e})"
                         )
                         current_lambda = proposed_lambda
             else:
-                # If adaptive lambda is off, only compute gradient norms for monitoring
+                # Optional gradient monitoring can use the same reuse path and
+                # therefore does not add a second data adjoint solve either.
                 if compute_lambda_grads_every_epoch:
-                    _, g_d_norm, g_m_norm = self.update_lambda_by_gradient_balance(
-                        loss_data, loss_model, current_lambda, bl=bl
+                    if profile_timing:
+                        _sync()
+                        t_lambda_grad = time.time()
+                    (
+                        _,
+                        g_d_norm,
+                        g_m_norm,
+                        grad_data_for_step,
+                        grad_model_for_step,
+                    ) = self.update_lambda_by_gradient_balance(
+                        loss_data,
+                        loss_model,
+                        current_lambda,
+                        bl=bl,
+                        return_gradients=True,
+                        retain_graph=False,
                     )
+                    if profile_timing:
+                        _sync()
+                        cached_backward_seconds = time.time() - t_lambda_grad
                 else:
                     g_d_norm = float("nan")
                     g_m_norm = float("nan")
-            # Monitoring / loss_history: model-term contribution matches total_loss gradient
-            # (∇(λ Φ_m) = λ ∇Φ_m for fixed λ), so report λ·||∇Φ_m|| (same RMS scale as ||·|| on g_m).
+
+            # Report the model-gradient contribution on the same scale as the
+            # total objective: grad(lambda*Phi_m) = lambda*grad(Phi_m).
             if not np.isfinite(float(g_m_norm)):
                 g_m_norm_scaled = float("nan")
             else:
                 g_m_norm_scaled = float(current_lambda) * float(g_m_norm)
 
             total_loss = loss_data + current_lambda * loss_model
-            if profile_timing:
-                # Probe-only gradients for fair OT/L2 timing comparison (do not update .grad).
-                _sync()
-                t0 = time.time()
-                _ = torch.autograd.grad(
-                    loss_data,
-                    self.model_log_sigma,
-                    retain_graph=True,
-                    allow_unused=True,
-                )
-                _sync()
-                profile_times["backward_data_probe"].append(time.time() - t0)
 
-                _sync()
-                t0 = time.time()
-                _ = torch.autograd.grad(
-                    current_lambda * loss_model,
-                    self.model_log_sigma,
-                    retain_graph=True,
-                    allow_unused=True,
+            if grad_data_for_step is not None and grad_model_for_step is not None:
+                # autograd.grad does not populate .grad.  Compose the exact total
+                # gradient using the (possibly just-updated) lambda.
+                self.model_log_sigma.grad = (
+                    grad_data_for_step
+                    + float(current_lambda) * grad_model_for_step
                 )
-                _sync()
-                profile_times["backward_model_probe"].append(time.time() - t0)
-            if profile_timing:
-                _sync()
-                t0 = time.time()
-            total_loss.backward()
-            if profile_timing:
-                _sync()
-                profile_times["backward"].append(time.time() - t0)
+                if profile_timing:
+                    profile_times["backward"].append(
+                        float(cached_backward_seconds or 0.0)
+                    )
+                    # No extra probe solves were performed on this epoch.
+                    profile_times["backward_data_probe"].append(0.0)
+                    profile_times["backward_model_probe"].append(0.0)
+            else:
+                # Standard epoch: one backward call, hence one data adjoint solve.
+                if profile_timing:
+                    # Probe-only component timings are retained only on epochs
+                    # where the graph has not already been consumed above.
+                    _sync()
+                    t0 = time.time()
+                    _ = torch.autograd.grad(
+                        loss_data,
+                        self.model_log_sigma,
+                        retain_graph=True,
+                        allow_unused=True,
+                    )
+                    _sync()
+                    profile_times["backward_data_probe"].append(time.time() - t0)
+
+                    _sync()
+                    t0 = time.time()
+                    _ = torch.autograd.grad(
+                        current_lambda * loss_model,
+                        self.model_log_sigma,
+                        retain_graph=True,
+                        allow_unused=True,
+                    )
+                    _sync()
+                    profile_times["backward_model_probe"].append(time.time() - t0)
+
+                    _sync()
+                    t0 = time.time()
+                total_loss.backward()
+                if profile_timing:
+                    _sync()
+                    profile_times["backward"].append(time.time() - t0)
 
             torch.nn.utils.clip_grad_norm_([self.model_log_sigma], 1.0)
             if profile_timing:
@@ -984,7 +1045,7 @@ class MT2DInverter(
                     bw = np.mean(profile_times["backward"]) * 1000
                     st = np.mean(profile_times["step"]) * 1000
 
-                    # 针对3dot/6dot vs MSE的对比逻辑
+                    # 3dot/6dot vs MSE timing breakdown
                     if mode == "mse":
                         main = dt + bw
                         main_label = "data_term+backward"
@@ -1052,7 +1113,7 @@ class MT2DInverter(
                         'n_epochs': n_epochs,
                         'lr': lr,
                         'mode': mode,
-                        # ... 其他重要参数 ...
+                        # ... other inversion options ...
                     }
                 }, checkpoint_path)
                 print(f"  ✓ Checkpoint saved: {checkpoint_path}")

@@ -1,28 +1,69 @@
-"""
-Constraint and regularization module.
-Contains constraint calculations for 1D and 2D inversion.
-"""
+"""Constraint and regularization utilities for 1-D and 2-D inversion."""
+from __future__ import annotations
+
+from typing import Optional, Tuple
 
 import torch
-from typing import Optional
 
 
 class ConstraintCalculator:
+    """Calculate mesh-aware model constraints.
+
+    The 2-D roughness term is discretized as a physical area integral of the
+    squared (or smoothed absolute) model gradient.  This makes the value stable
+    when the same physical model is represented on a refined/coarsened mesh.
+    The reference-model term is an area-weighted mean, so it is also stable with
+    respect to cell count and padding of the computational mesh.
     """
-    Constraint calculator.
-    Supports various constraint types for 1D and 2D models.
-    """
-    
+
     def __init__(self, nx: int, nz: int, dx, dz, device: str = "cpu"):
-        """
-        Initialize constraint calculator; store grid info.
-        dx, dz: grid spacing (m). Can be float (uniform) or 1D tensor/array (non-uniform).
-        """
-        self.nx = nx
-        self.nz = nz
-        self.dx = torch.as_tensor(dx, device=device) if not isinstance(dx, torch.Tensor) else dx.to(device)
-        self.dz = torch.as_tensor(dz, device=device) if not isinstance(dz, torch.Tensor) else dz.to(device)
+        self.nx = int(nx)
+        self.nz = int(nz)
+        self.dx = (
+            torch.as_tensor(dx, device=device)
+            if not isinstance(dx, torch.Tensor)
+            else dx.to(device)
+        )
+        self.dz = (
+            torch.as_tensor(dz, device=device)
+            if not isinstance(dz, torch.Tensor)
+            else dz.to(device)
+        )
         self.device = device
+
+    def _spacing_vectors(
+        self,
+        *,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Return positive 1-D cell-width vectors of lengths ``nx`` and ``nz``."""
+        dx = self.dx.to(device=device, dtype=dtype).reshape(-1)
+        dz = self.dz.to(device=device, dtype=dtype).reshape(-1)
+
+        if dx.numel() == 1:
+            dx = dx.expand(self.nx)
+        if dz.numel() == 1:
+            dz = dz.expand(self.nz)
+
+        if dx.numel() != self.nx:
+            raise ValueError(
+                f"dx size mismatch: expected {self.nx}, got {dx.numel()}"
+            )
+        if dz.numel() != self.nz:
+            raise ValueError(
+                f"dz size mismatch: expected {self.nz}, got {dz.numel()}"
+            )
+        if (dx <= 0).any() or (dz <= 0).any():
+            raise ValueError("All dx/dz cell widths must be strictly positive")
+        return dx, dz
+
+    @staticmethod
+    def _validate_model_shape(model: torch.Tensor, nz: int, nx: int) -> None:
+        if tuple(model.shape) != (nz, nx):
+            raise ValueError(
+                f"Model shape mismatch: expected {(nz, nx)}, got {tuple(model.shape)}"
+            )
 
     def compute_depth_weights_from_zn(
         self,
@@ -32,14 +73,7 @@ class ConstraintCalculator:
         clamp_max: float = 500.0,
         normalize: bool = True,
     ) -> torch.Tensor:
-        """Compute depth weights for roughness regularization.
-
-        Heuristic form (earth layers only, excluding air):
-            w(z) = (z / z0)^beta
-        Then clamp and (optionally) normalize to max=1.
-
-        Returns a matrix shaped like the earth model domain: (nz_earth, nx).
-        """
+        """Compute earth-only depth weights ``w(z) = (z/z0)^beta``."""
         zn_tensor = (
             zn.to(self.device, dtype=torch.float64)
             if isinstance(zn, torch.Tensor)
@@ -52,10 +86,10 @@ class ConstraintCalculator:
         z_centers_full = (zn_tensor[:-1] + zn_tensor[1:]) * 0.5
         z_centers_earth = z_centers_full[nza_i:]
 
-        if int(z_centers_earth.numel()) != int(self.nz):
+        if int(z_centers_earth.numel()) != self.nz:
             raise ValueError(
-                f"Depth weights size mismatch: expected nz_earth={self.nz}, got {int(z_centers_earth.numel())}. "
-                "Check zn and nza consistency."
+                f"Depth weights size mismatch: expected nz_earth={self.nz}, "
+                f"got {int(z_centers_earth.numel())}. Check zn and nza consistency."
             )
 
         z_pos = torch.clamp(z_centers_earth, min=1.0)
@@ -65,175 +99,177 @@ class ConstraintCalculator:
         if normalize:
             w_z = w_z / w_z.max().clamp(min=1e-12)
         return w_z.to(device=self.device, dtype=torch.float64)
-    
-    
+
     def calculate_weighted_roughness(
         self,
-        model_log_sigma,
-        weights=None,
+        model_log_sigma: torch.Tensor,
+        weights: Optional[torch.Tensor] = None,
         norm_type: str = "L2",
         alpha_x: float = 1.0,
         alpha_z: float = 1.0,
-    ):
+        tv_epsilon: float = 1e-8,
+    ) -> torch.Tensor:
+        """Return a mesh-stable 2-D roughness constraint.
+
+        For L2 the discretization approximates
+
+            integral [ (dm/dx)^2 + (dm/dz)^2 ] dA.
+
+        In two dimensions this physical integral is invariant, to discretization
+        error, when a fixed physical model/domain is remeshed.  For L1 a smooth
+        TV density ``sqrt(gradient**2 + tv_epsilon**2)`` is used.
+
+        Spatial weights are interpolated to interfaces and multiply the
+        gradient before the norm, preserving the previous weighting convention.
         """
-        Weighted roughness as integral of gradient squared: ∫|∇m|² dA.
-                Uses physical gradient (per meter) and integration area (cell area) so that
-                the discretization matches ∫|∇m|^p dA:
-                    - x-gradient term uses area ~ dz * dx
-                    - z-gradient term uses area ~ dx * dz
-        
-        Args:
-            model_log_sigma: Current model log conductivity [nz, nx]
-            weights: Weight matrix (optional)
-            norm_type: "L1" or "L2"
-            alpha_x: Weight for horizontal (x) roughness term
-            alpha_z: Weight for vertical (z) roughness term
-            
-        Returns:
-            Roughness value
-        """
-        # 1. Compute diff
-        diff_x = (model_log_sigma[:, 1:] - model_log_sigma[:, :-1])
-        diff_z = (model_log_sigma[1:, :] - model_log_sigma[:-1, :])
+        self._validate_model_shape(model_log_sigma, self.nz, self.nx)
+        dx, dz = self._spacing_vectors(
+            dtype=model_log_sigma.dtype,
+            device=model_log_sigma.device,
+        )
 
-        # 2. Interface spacing: (cell_i + cell_i+1) / 2
-        dx, dz = self.dx, self.dz
-        if dx.ndim == 0:
-            sp_x = dx
-            sp_z = dz
-        else:
-            sp_x = (dx[:-1] + dx[1:]) * 0.5
-            sp_z = (dz[:-1] + dz[1:]) * 0.5
-
-        # 3. Physical gradient (per meter)
-        grad_x = diff_x / sp_x.reshape(1, -1) if sp_x.ndim > 0 else diff_x / sp_x
-        grad_z = diff_z / sp_z.reshape(-1, 1) if sp_z.ndim > 0 else diff_z / sp_z
-
-        # 4. Integration area (cell area associated with each gradient sample)
-        # For x-gradient (between columns): area ≈ dz * sp_x
-        # For z-gradient (between rows):    area ≈ dx * sp_z
-        if dz.ndim == 0:
-            dz_col = dz
-        else:
-            dz_col = dz.reshape(-1, 1)
-        if dx.ndim == 0:
-            dx_row = dx
-        else:
-            dx_row = dx.reshape(1, -1)
-
-        if sp_x.ndim == 0:
-            area_for_x = dz_col * sp_x
-        else:
-            area_for_x = dz_col * sp_x.reshape(1, -1)
-
-        if sp_z.ndim == 0:
-            area_for_z = dx_row * sp_z
-        else:
-            area_for_z = dx_row * sp_z.reshape(-1, 1)
-
-        # 5. Optional spatial weights
         if weights is not None:
-            w_x = (weights[:, 1:] + weights[:, :-1]) * 0.5
-            w_z = (weights[1:, :] + weights[:-1, :]) * 0.5
-            grad_x = grad_x * w_x
-            grad_z = grad_z * w_z
+            weights = weights.to(
+                device=model_log_sigma.device,
+                dtype=model_log_sigma.dtype,
+            )
+            self._validate_model_shape(weights, self.nz, self.nx)
 
-        # 6. Integral of |grad|^p over area
-        if norm_type == "L1":
-            loss_x = torch.sum(torch.abs(grad_x) * area_for_x)
-            loss_z = torch.sum(torch.abs(grad_z) * area_for_z)
-        elif norm_type == "L2":
-            loss_x = torch.sum(grad_x ** 2 * area_for_x)
-            loss_z = torch.sum(grad_z ** 2 * area_for_z)
-        else:
-            raise ValueError("Unsupported norm_type. Please choose 'L1' or 'L2'.")
+        zero = model_log_sigma.new_zeros(())
+        loss_x = zero
+        loss_z = zero
 
-        ax = float(alpha_x)
-        az = float(alpha_z)
-        total = ax * loss_x + az * loss_z
-        epsilon = 1e-12
-        return total + epsilon * total
-    
-    def calculate_reference_model_constraint(self, 
-                                            model_log_sigma: torch.Tensor,
-                                            reference_model_log_sigma: torch.Tensor,
-                                            weights: Optional[torch.Tensor] = None,
-                                            norm_type: str = "L2") -> torch.Tensor:
+        if self.nx > 1:
+            diff_x = model_log_sigma[:, 1:] - model_log_sigma[:, :-1]
+            spacing_x = 0.5 * (dx[:-1] + dx[1:])
+            grad_x = diff_x / spacing_x.view(1, -1)
+            if weights is not None:
+                grad_x = grad_x * 0.5 * (weights[:, 1:] + weights[:, :-1])
+            area_x = dz.view(-1, 1) * spacing_x.view(1, -1)
+            if norm_type.upper() == "L2":
+                density_x = grad_x.square()
+            elif norm_type.upper() == "L1":
+                eps = model_log_sigma.new_tensor(float(tv_epsilon))
+                density_x = torch.sqrt(grad_x.square() + eps.square())
+            else:
+                raise ValueError("Unsupported norm_type. Choose 'L1' or 'L2'.")
+            # Interface dual cells omit half a boundary cell on each side.
+            # Rescale their covered area to the full model area so a constant
+            # physical gradient has the same integral on coarse and fine grids.
+            domain_area = torch.sum(dx) * torch.sum(dz)
+            covered_area_x = torch.sum(area_x).clamp_min(
+                torch.finfo(model_log_sigma.dtype).eps
+            )
+            loss_x = (
+                torch.sum(density_x * area_x)
+                * domain_area
+                / covered_area_x
+            )
+
+        if self.nz > 1:
+            diff_z = model_log_sigma[1:, :] - model_log_sigma[:-1, :]
+            spacing_z = 0.5 * (dz[:-1] + dz[1:])
+            grad_z = diff_z / spacing_z.view(-1, 1)
+            if weights is not None:
+                grad_z = grad_z * 0.5 * (weights[1:, :] + weights[:-1, :])
+            area_z = spacing_z.view(-1, 1) * dx.view(1, -1)
+            if norm_type.upper() == "L2":
+                density_z = grad_z.square()
+            elif norm_type.upper() == "L1":
+                eps = model_log_sigma.new_tensor(float(tv_epsilon))
+                density_z = torch.sqrt(grad_z.square() + eps.square())
+            else:
+                raise ValueError("Unsupported norm_type. Choose 'L1' or 'L2'.")
+            domain_area = torch.sum(dx) * torch.sum(dz)
+            covered_area_z = torch.sum(area_z).clamp_min(
+                torch.finfo(model_log_sigma.dtype).eps
+            )
+            loss_z = (
+                torch.sum(density_z * area_z)
+                * domain_area
+                / covered_area_z
+            )
+
+        return float(alpha_x) * loss_x + float(alpha_z) * loss_z
+
+    def calculate_reference_model_constraint(
+        self,
+        model_log_sigma: torch.Tensor,
+        reference_model_log_sigma: torch.Tensor,
+        weights: Optional[torch.Tensor] = None,
+        norm_type: str = "L2",
+        tv_epsilon: float = 1e-8,
+    ) -> torch.Tensor:
+        """Return an area-weighted mean distance to a reference model.
+
+        The denominator is the total active-cell area rather than the number of
+        cells, so non-uniform and refined meshes represent the same continuous
+        constraint on the same scale.
         """
-        Reference model constraint (keep model close to reference).
-        
-        Args:
-            model_log_sigma: Current log conductivity [nz, nx]
-            reference_model_log_sigma: Reference log conductivity [nz, nx]
-            weights: Spatial weights [nz, nx] (optional)
-            norm_type: "L1" or "L2"
-            
-        Returns:
-            Reference model constraint value
-        """
-        # 1. Deviation from reference
-        diff = model_log_sigma - reference_model_log_sigma
-        
-        # 2. Apply spatial weights if provided
+        self._validate_model_shape(model_log_sigma, self.nz, self.nx)
+        self._validate_model_shape(reference_model_log_sigma, self.nz, self.nx)
+
+        dx, dz = self._spacing_vectors(
+            dtype=model_log_sigma.dtype,
+            device=model_log_sigma.device,
+        )
+        diff = model_log_sigma - reference_model_log_sigma.to(
+            device=model_log_sigma.device,
+            dtype=model_log_sigma.dtype,
+        )
+
         if weights is not None:
+            weights = weights.to(
+                device=model_log_sigma.device,
+                dtype=model_log_sigma.dtype,
+            )
+            self._validate_model_shape(weights, self.nz, self.nx)
             diff = diff * weights
-        
-        # 3. 根据 norm_type 选择 L1 或 L2 范数
-        if norm_type == "L1":
-            # L1 范数：使用绝对值
-            loss = torch.sum(torch.abs(diff))
-        elif norm_type == "L2":
-            # L2: sum of squares
-            loss = torch.sum(diff ** 2)
+
+        if norm_type.upper() == "L2":
+            density = diff.square()
+        elif norm_type.upper() == "L1":
+            eps = model_log_sigma.new_tensor(float(tv_epsilon))
+            density = torch.sqrt(diff.square() + eps.square())
         else:
-            raise ValueError("Unsupported norm_type. Please choose 'L1' or 'L2'.")
-        
-        return loss
-    
-    def calculate_combined_constraint(self,
-                                     model_log_sigma: torch.Tensor,
-                                     reference_model_log_sigma: Optional[torch.Tensor] = None,
-                                     roughness_weights: Optional[torch.Tensor] = None,
-                                     reference_weights: Optional[torch.Tensor] = None,
-                                     roughness_norm: str = "L2",
-                                     reference_norm: str = "L2",
-                                     reference_weight: float = 0.0,
-                                     alpha_x: float = 1.0,
-                                     alpha_z: float = 1.0) -> torch.Tensor:
-        """
-        Combined constraint: roughness + reference model.
-        
-        Args:
-            model_log_sigma: Current log conductivity [nz, nx]
-            reference_model_log_sigma: Reference log conductivity [nz, nx] (optional)
-            roughness_weights: Roughness weights (optional)
-            reference_weights: Reference constraint weights (optional)
-            roughness_norm: "L1" or "L2"
-            reference_norm: "L1" or "L2"
-            reference_weight: Reference weight (0.0 = disabled)
-            alpha_x: Weight for horizontal (x) roughness term
-            alpha_z: Weight for vertical (z) roughness term
-            
-        Returns:
-            Combined constraint value
-        """
-        # 1. Roughness constraint
+            raise ValueError("Unsupported norm_type. Choose 'L1' or 'L2'.")
+
+        cell_area = dz.view(-1, 1) * dx.view(1, -1)
+        total_area = torch.sum(cell_area).clamp_min(
+            torch.finfo(model_log_sigma.dtype).eps
+        )
+        return torch.sum(density * cell_area) / total_area
+
+    def calculate_combined_constraint(
+        self,
+        model_log_sigma: torch.Tensor,
+        reference_model_log_sigma: Optional[torch.Tensor] = None,
+        roughness_weights: Optional[torch.Tensor] = None,
+        reference_weights: Optional[torch.Tensor] = None,
+        roughness_norm: str = "L2",
+        reference_norm: str = "L2",
+        reference_weight: float = 0.0,
+        alpha_x: float = 1.0,
+        alpha_z: float = 1.0,
+        tv_epsilon: float = 1e-8,
+    ) -> torch.Tensor:
+        """Return roughness plus an optional reference-model constraint."""
         roughness_loss = self.calculate_weighted_roughness(
             model_log_sigma,
             roughness_weights,
             roughness_norm,
             alpha_x=alpha_x,
             alpha_z=alpha_z,
+            tv_epsilon=tv_epsilon,
         )
-        
-        # 2. Reference model constraint if provided and weight > 0
+
         if reference_model_log_sigma is not None and reference_weight > 0.0:
             reference_loss = self.calculate_reference_model_constraint(
-                model_log_sigma, reference_model_log_sigma, 
-                reference_weights, reference_norm
+                model_log_sigma,
+                reference_model_log_sigma,
+                reference_weights,
+                reference_norm,
+                tv_epsilon=tv_epsilon,
             )
-            return roughness_loss + reference_weight * reference_loss
-        else:
-            return roughness_loss
-    
-    
+            return roughness_loss + float(reference_weight) * reference_loss
+        return roughness_loss

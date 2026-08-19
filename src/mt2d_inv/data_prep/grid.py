@@ -1,16 +1,19 @@
-"""2D MT 数据准备（EDI → 张量、剖面、绘图等）。
+"""2D MT data preparation (EDI → tensors, profiles, plotting, etc.).
 
-修订说明（2026-04-11）
-    与 GMT 先验网格衔接：``PrepareData`` 新增 ``_sorted_mts_for_export``、
-    ``get_station_lon_lat_sorted``、``build_prior_lon_lat_at_y_centers``、
-    ``build_prior_options``。在 ``yn`` 水平元胞中心对台站经纬度线性插值（``extrapolate=clamp``），
-    台站排序与 ``export_data_dict_for_2d_inversion(..., sort_by=...)`` 一致，生成
-    ``prior_options['lon']/['lat']``，供 ``prior_grids.build_prior_sigma_earth`` 与
-    ``MT2DInverter.initialize_model(..., use_prior_model=True)`` 使用。
+Revision notes (2026-04-11)
+    GMT prior-grid integration: ``PrepareData`` adds ``_sorted_mts_for_export``,
+    ``get_station_lon_lat_sorted``, ``build_prior_lon_lat_at_y_centers``, and
+    ``build_prior_options``. Station lon/lat are linearly interpolated at ``yn``
+    horizontal cell centers (``extrapolate=clamp``). Station ordering matches
+    ``export_data_dict_for_2d_inversion(..., sort_by=...)``, producing
+    ``prior_options['lon']/['lat']`` for ``prior_grids.build_prior_sigma_earth``
+    and ``MT2DInverter.initialize_model(..., use_prior_model=True)``.
 
-    Slab 的 ``.grd`` 只提供界面深度标量场；板片上/下方电导率在先验里由调用方通过
-    ``sigma_above_slab``、``sigma_below_slab``（S/m）传入。可选 ``slab_plate_thickness_m`` +
-    ``sigma_mantle_deep`` 将高阻板片限制为有限厚度，其下恢复地幔电导率（避免半无限洋壳柱）。
+    A slab ``.grd`` supplies only an interface-depth scalar field; conductivities
+    above/below the slab are set by the caller via ``sigma_above_slab`` and
+    ``sigma_below_slab`` (S/m). Optional ``slab_plate_thickness_m`` +
+    ``sigma_mantle_deep`` limits the resistive slab to finite thickness and
+    restores mantle conductivity below it (avoiding a semi-infinite oceanic-crust column).
 """
 from __future__ import annotations
 

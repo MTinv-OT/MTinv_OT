@@ -11,8 +11,8 @@ import torch
 class InversionOTMixin:
     def _get_6d_valid_mask(self) -> torch.Tensor:
         """
-        获取 6D OT 的全局有效数据掩码。
-        在 6D 点云中，一个 (freq, station) 点必须四个分量全部存在才视为有效点。
+        Get the global valid-data mask for 6D OT.
+        In the 6D point cloud, a (freq, station) point is valid only if all four components exist.
         """
         m1 = ~torch.isnan(self.obs_data.get('rhoxy', torch.tensor(float('nan'))))
         m2 = ~torch.isnan(self.obs_data.get('phsxy', torch.tensor(float('nan'))))
@@ -25,7 +25,7 @@ class InversionOTMixin:
                              key: str) -> torch.Tensor:
         """
         Build a normalized (N_valid, 3) point cloud: [Freq, Station, Value].
-        使用动态掩码剔除 NaN 数据，确保 OT 计算只在真实数据点上进行。
+        Drop NaN data with a dynamic mask so OT uses only real observations.
         """
         obs_raw = self.obs_data[key]
         valid_mask = ~torch.isnan(obs_raw.flatten())
@@ -33,16 +33,16 @@ class InversionOTMixin:
         n_freq = len(self.freqs)
         n_stations = len(self.stations)
         
-        # 1) Normalize frequency (log domain) -> [0, 1] -> 剔除 NaN
+        # 1) Normalize frequency (log domain) -> [0, 1] -> drop NaN
         log_freq = torch.log10(self.freqs)
         norm_freq = (log_freq - log_freq.min()) / (log_freq.max() - log_freq.min() + 1e-8)
         grid_freq = norm_freq.view(-1, 1).expand(n_freq, n_stations).flatten()[valid_mask]
         
-        # 2) Normalize stations -> [0, 1] -> 剔除 NaN
+        # 2) Normalize stations -> [0, 1] -> drop NaN
         norm_stn = (self.stations - self.stations.min()) / (self.stations.max() - self.stations.min() + 1e-8)
         grid_stn = norm_stn.view(1, -1).expand(n_freq, n_stations).flatten()[valid_mask]
         
-        # 3) Normalize values -> [0, 1] -> 剔除 NaN
+        # 3) Normalize values -> [0, 1] -> drop NaN
         data_flat = data_tensor.flatten()[valid_mask]
         if 'rho' in key.lower():
             val_log = torch.log10(data_flat + 1e-12)
@@ -149,7 +149,7 @@ class InversionOTMixin:
         grid_s = norm_s.view(1, -1).expand(n_freq, n_stn).flatten()[valid_mask]
 
         def _norm_pred(key: str, data: torch.Tensor):
-            data_flat = data.flatten()[valid_mask] # [关键修改] 过滤预测数据
+            data_flat = data.flatten()[valid_mask] # filter prediction data with the same mask
             if 'rho' in key.lower():
                 val_log = torch.log10(data_flat + 1e-12)
                 return (val_log - (-2.0)) / (6.0 - (-2.0))

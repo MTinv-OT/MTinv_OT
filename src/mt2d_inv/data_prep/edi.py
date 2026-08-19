@@ -271,24 +271,25 @@ class EdiMixin:
         max_noise_std: float = 1.0,
         err_component_scale: float = 1.0,
     ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
-        """把阻抗张量 Z 转成视电阻率 rho 与相位 phs，并可选传播误差。
+        """Convert impedance tensor Z to apparent resistivity rho and phase phs, with optional error propagation.
 
-        公式（与用户给出的 torch 版本一致）：
+        Formulas (consistent with the user's torch version):
         - rho = |Z|^2 / (omega * mu0)
         - phs_raw = atan2(Im(Z), Re(Z)) [deg]  (range: (-180, 180])
         - phs = fold(phs_raw) into principal phase [0, 90]
 
-        误差传播（假设 Re/Im 独立，且两者 std-dev 相同）：
+        Error propagation (assuming Re/Im independent with the same std-dev):
         - d(rho) = sqrt( (∂rho/∂Zr * σr)^2 + (∂rho/∂Zi * σi)^2 )
         - d(phi) = sqrt( (∂phi/∂Zr * σr)^2 + (∂phi/∂Zi * σi)^2 )
 
-        返回：rho, phs, rho_err, phs_err, rho_noise_std_log10, phs_noise_std_norm
+        Returns: rho, phs, rho_err, phs_err, rho_noise_std_log10, phs_noise_std_norm
 
         Notes
         -----
-        - `Z_err` 来自 EDI 的 `Z..VAR`：在 ``read_custom_edi`` 中，``CAF*`` 台站按块内为 **std-dev**
-          直接使用；其余台站按 **方差** 读入并已 ``sqrt`` 为 std-dev。此处一律按“每个复阻抗
-          分量的 std-dev”做误差传播。若仍需缩放，可用 ``err_component_scale``。
+        - `Z_err` comes from EDI `Z..VAR`: in ``read_custom_edi``, ``CAF*`` stations use **std-dev**
+          as stored in-block; other stations are read as **variance** and already ``sqrt``-converted
+          to std-dev. Error propagation here always treats Z_err as the std-dev of each complex
+          impedance component. If further scaling is needed, use ``err_component_scale``.
         """
 
         freqs_hz = np.asarray(freqs_hz, dtype=float)

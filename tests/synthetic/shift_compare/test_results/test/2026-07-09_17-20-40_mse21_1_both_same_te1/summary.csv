@@ -1,2 +1,0 @@
-﻿run_name,timestamp,run_dir,epochs,final_misfit,best_misfit,total_time_s,avg_epoch_time_s,forward_ms,data_prep_ms,data_term_ms,backward_ms,step_ms,reg_ms,rmse,mape,correlation,ssim,anomaly_rmse,anomaly_mape
-mse21_1_both_same_te1,2026-07-09_17-20-40,2026-07-09_17-20-40_mse21_1_both_same_te1,3,8.190724467974636,8.190724467974636,1.6254122257232666,0.5407083034515381,,,,,,,0.16054757711438408,4.111830934726357,0.1005296089161051,0.5959519934950406,,

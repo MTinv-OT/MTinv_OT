@@ -13,7 +13,7 @@ class CleaningMixin:
         mt_objects: Optional[Sequence["PrepareData.CustomMT"]] = None,
         *,
         zxy_phase_range: Tuple[float, float] = (-5.0, 95.0),
-        zyx_phase_range: Tuple[float, float] = (175.0, 275.0), # 推荐直接使用 0~360 的角度定义
+        zyx_phase_range: Tuple[float, float] = (175.0, 275.0), # prefer a 0–360° angle convention
         rel_err_max: float = 0.5,
         skew_threshold: Optional[float] = 15.0,
         neighbor_z_thresh: float = 4.0,
@@ -21,28 +21,28 @@ class CleaningMixin:
         neighbor_phs_deg_floor: float = 8.0,
     ) -> None:
         """
-        数据清洗：OOQ + rel_err + Phase Tensor Skew + 邻频(ρa/φ+误差棒)飞点。
+        Data cleaning: OOQ + rel_err + phase-tensor skew + neighbor-frequency (ρa/φ + error bars) spikes.
 
-        P1 (OOQ)：能量耗散关系反了则一票否决，在相位折叠到 0~90° 之前拦截。
-        - Zxy 理论在第一象限，检查 arctan2(Im, Re) 是否在 zxy_phase_range (默认 [-5°, 95°])
-        - Zyx 理论在第三象限，检查 arctan2(Im, Re) % 360 是否在 zyx_phase_range (默认 [175°, 275°])
-        越界者：将该频点该模式的 Z, Z_err 置 NaN
+        P1 (OOQ): reject frequencies whose energy-dissipation relation is reversed, before folding phase into 0–90°.
+        - Zxy is theoretically in the first quadrant; check whether arctan2(Im, Re) lies in zxy_phase_range (default [-5°, 95°])
+        - Zyx is theoretically in the third quadrant; check whether arctan2(Im, Re) % 360 lies in zyx_phase_range (default [175°, 275°])
+        Out-of-range: set that frequency's Z and Z_err for the mode to NaN
 
-        P2 (rel_err)：相对误差超 rel_err_max (默认 50%) 则剔除该频点的有效反演分量。
-        - 仅对反演使用的离对角分量 Zxy/Zyx 计算相对误差（避免 Zxx/Zyy 小量噪声导致误杀）
-        - 若 max(rel_err(Zxy), rel_err(Zyx)) > rel_err_max，则将该频点的 Zxy/Zyx (及其 Z_err) 置 NaN
+        P2 (rel_err): drop inversion-used components at a frequency if relative error exceeds rel_err_max (default 50%).
+        - Relative error is computed only on off-diagonal Zxy/Zyx (avoid false rejects from noisy near-zero Zxx/Zyy)
+        - If max(rel_err(Zxy), rel_err(Zyx)) > rel_err_max, set that frequency's Zxy/Zyx (and Z_err) to NaN
 
-        P3 (skew)：强三维畸变剔除，保护 2D 正演不被 3D 现象“欺骗”。
-        - 计算相位张量偏斜度 β，若 |β| > skew_threshold (默认 8°)，将该点双模式(TE/TM)全位置 NaN
-        - skew_threshold=None 则跳过此检查
+        P3 (skew): reject strong 3-D distortion so 2-D forward modeling is not misled by 3-D effects.
+        - Compute phase-tensor skew β; if |β| > skew_threshold (default 8°), set both TE/TM modes at that frequency to NaN
+        - skew_threshold=None skips this check
 
-        P4 (neighbor spike, per channel)：
-        - 在每个模式分量（Zxy/Zyx）上，使用 q=log10(ρa) 与 q=φ(°) 分别做邻频比较
-        - 当前点与邻居中位数的偏差若同时满足：
-            |Δq| > abs_floor 且 |Δq| / sqrt(σ_i^2 + σ_nei^2) > z_thresh
-          则判为飞点（仅该分量该频点置 NaN）
-        - 阈值默认较宽松：z_thresh=4，ρa floor=0.25 log10，φ floor=8°
-        - 需要 Z_err 才能使用误差棒；若无 Z_err 则跳过 P4
+        P4 (neighbor spike, per channel):
+        - On each mode (Zxy/Zyx), compare neighboring frequencies using q=log10(ρa) and q=φ(°) separately
+        - Flag a spike if the deviation from the neighbor median satisfies both:
+            |Δq| > abs_floor and |Δq| / sqrt(σ_i^2 + σ_nei^2) > z_thresh
+          (only that component at that frequency is set to NaN)
+        - Defaults are relatively loose: z_thresh=4, ρa floor=0.25 log10, φ floor=8°
+        - Error bars require Z_err; skip P4 if Z_err is missing
         """
         if mt_objects is None:
             mt_objects = self.mt_objects
@@ -65,7 +65,7 @@ class CleaningMixin:
 
             # -------- Priority 1: OOQ (raw phase, before fold) --------
             phs_xy = np.degrees(np.arctan2(Z[:, 0, 1].imag, Z[:, 0, 1].real))
-            # 对于 Zyx 采用模 360 运算，彻底解决 -180/180 跃变问题
+            # Use modulo-360 for Zyx to avoid the -180/180 wraparound
             phs_yx_360 = np.degrees(np.arctan2(Z[:, 1, 0].imag, Z[:, 1, 0].real)) % 360.0
 
             bad_xy = (phs_xy < zxy_phase_range[0]) | (phs_xy > zxy_phase_range[1])
@@ -78,7 +78,7 @@ class CleaningMixin:
             n_ooq_xy += int(np.sum(bad_xy))
             n_ooq_yx += int(np.sum(bad_yx))
 
-            # 使用直接切片赋值，避免 Numpy 链式视图潜在警告
+            # Assign via direct slicing to avoid NumPy chained-view warnings
             Z[bad_xy, 0, 1] = np.nan + 1j * np.nan
             Z[bad_yx, 1, 0] = np.nan + 1j * np.nan
             

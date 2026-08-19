@@ -41,7 +41,6 @@ def _auto_vlim(
         vmax_use = vmin_use * 1.01
     return vmin_use, vmax_use
 
-
 def plot_apparent_resistivity_pseudosection(
     freqs: np.ndarray,
     stations: np.ndarray,
@@ -55,17 +54,36 @@ def plot_apparent_resistivity_pseudosection(
     ax: Optional[plt.Axes] = None,
     add_colorbar: bool = True,
     show: bool = True,
+    title: Optional[str] = None,
+    label_fontsize: float = 18,
+    tick_fontsize: float = 20,
+    title_fontsize: float = 18,
+    colorbar_label_fontsize: float = 16,
+    colorbar_tick_fontsize: float = 14,
 ) -> plt.Axes:
     """Contour pseudosection: stations (x) vs frequency/period (y)."""
     apply_plot_style()
+
     freqs = np.asarray(freqs, dtype=float).reshape(-1)
     stations = np.asarray(stations, dtype=float).reshape(-1)
     rho = np.asarray(rho, dtype=float)
+
     if rho.ndim != 2:
-        raise ValueError(f"rho must be 2D (n_freq, n_station), got shape {rho.shape}")
+        raise ValueError(
+            f"rho must be 2D (n_freq, n_station), got shape {rho.shape}"
+        )
+
+    expected_shape = (freqs.size, stations.size)
+    if rho.shape != expected_shape:
+        raise ValueError(
+            f"rho shape must be {expected_shape}, got {rho.shape}"
+        )
 
     vmin_use, vmax_use = _auto_vlim(
-        rho, vmin=vmin, vmax=vmax, percentiles=vlim_percentiles
+        rho,
+        vmin=vmin,
+        vmax=vmax,
+        percentiles=vlim_percentiles,
     )
 
     created = ax is None
@@ -75,23 +93,61 @@ def plot_apparent_resistivity_pseudosection(
     st_km = stations / 1000.0
     periods = 1.0 / np.clip(freqs, 1e-30, None)
     X, Y = np.meshgrid(st_km, periods)
+
     data = np.ma.masked_invalid(rho)
+
     pcm = ax.pcolormesh(
-        X, Y, data, shading="auto", cmap=cmap, vmin=vmin_use, vmax=vmax_use
+        X,
+        Y,
+        data,
+        shading="auto",
+        cmap=cmap,
+        vmin=vmin_use,
+        vmax=vmax_use,
     )
+
     if log_y:
         ax.set_yscale("log")
-    ax.set_xlabel("Distance (km)")
-    ax.set_ylabel("Period (s)")
+
+    ax.set_xlabel(
+        "Distance (km)",
+        fontsize=label_fontsize,
+    )
+    ax.set_ylabel(
+        "Period (s)",
+        fontsize=label_fontsize,
+    )
+    ax.tick_params(
+        axis="both",
+        which="both",
+        labelsize=tick_fontsize,
+    )
+
+    if title:
+        ax.set_title(
+            title,
+            fontsize=title_fontsize,
+        )
+
     ax.invert_yaxis()
+
     if add_colorbar:
-        plt.colorbar(pcm, ax=ax, label="ρ_a (Ω·m)")
+        cb = ax.figure.colorbar(pcm, ax=ax)
+        cb.set_label(
+            "ρₐ (Ω·m)",
+            fontsize=colorbar_label_fontsize,
+        )
+        cb.ax.tick_params(
+            labelsize=colorbar_tick_fontsize,
+        )
+
     if created:
-        plt.tight_layout()
+        ax.figure.tight_layout()
+
         if show:
             plt.show()
-    return ax
 
+    return ax
 
 def plot_pseudosection_from_npz(
     npz_path: Union[str, Path],
@@ -110,7 +166,7 @@ def plot_pseudosection_from_npz(
     return plot_apparent_resistivity_pseudosection(
         d["freqs"], d["stations"], d[key], title=title, **kwargs
     )
-
+    
 def plot_inversion_pseudosection_comparison(
     freqs: np.ndarray,
     stations: np.ndarray,
@@ -123,62 +179,134 @@ def plot_inversion_pseudosection_comparison(
     vlim_percentiles: Tuple[float, float] = (2.0, 98.0),
     suptitle: Optional[str] = None,
     show: bool = True,
+    label_fontsize: float = 18,
+    tick_fontsize: float = 20,
+    title_fontsize: float = 18,
+    suptitle_fontsize: float = 18,
+    colorbar_label_fontsize: float = 16,
+    colorbar_tick_fontsize: float = 14,
 ) -> np.ndarray:
-    """Plot multiple ρ_a panels side by side with a shared color scale."""
+    """Plot multiple apparent-resistivity panels with one color scale."""
     apply_plot_style()
+
+    if not rho_dict:
+        raise ValueError("rho_dict must contain at least one panel")
+
+    valid_arrays = [
+        _valid_rho_values(rho)
+        for rho in rho_dict.values()
+    ]
+    valid_arrays = [
+        values
+        for values in valid_arrays
+        if values.size > 0
+    ]
+
     if vmin is None or vmax is None:
-        stacked = np.concatenate([_valid_rho_values(r) for r in rho_dict.values()])
-        if stacked.size == 0:
-            vmin_u, vmax_u = 1.0, 100.0
-        else:
+        if valid_arrays:
+            stacked = np.concatenate(valid_arrays)
             vmin_u, vmax_u = _auto_vlim(
-                stacked, vmin=vmin, vmax=vmax, percentiles=vlim_percentiles
+                stacked,
+                vmin=vmin,
+                vmax=vmax,
+                percentiles=vlim_percentiles,
             )
+        else:
+            vmin_u, vmax_u = 1.0, 100.0
     else:
         vmin_u, vmax_u = float(vmin), float(vmax)
 
+    freqs_a = np.asarray(freqs, dtype=float).reshape(-1)
+    stations_a = np.asarray(stations, dtype=float).reshape(-1)
+
+    st_km = stations_a / 1000.0
+    periods = 1.0 / np.clip(freqs_a, 1e-30, None)
+    X, Y = np.meshgrid(st_km, periods)
+
     n = len(rho_dict)
-    
-    # ✅ 使用 GridSpec 明确分配空间：n 个子图 + 1 个 colorbar 位置
-    fig = plt.figure(figsize=(5 * n + 1, 5))  # 额外加宽 1 英寸给 colorbar
-    gs = fig.add_gridspec(1, n + 1, width_ratios=[1] * n + [0.05], wspace=0.3)
-    
-    axes = []
-    for i in range(n):
-        ax = fig.add_subplot(gs[0, i])
-        axes.append(ax)
-    
+
+    fig = plt.figure(
+        figsize=(5 * n + 1, 5),
+        constrained_layout=True,
+    )
+
+    gs = fig.add_gridspec(
+        1,
+        n + 1,
+        width_ratios=[1.0] * n + [0.05],
+        wspace=0.15,
+    )
+
+    axes = [
+        fig.add_subplot(gs[0, i])
+        for i in range(n)
+    ]
+
     last_pcm = None
+
     for ax, (label, rho) in zip(axes, rho_dict.items()):
-        freqs_a = np.asarray(freqs, dtype=float).reshape(-1)
-        stations_a = np.asarray(stations, dtype=float).reshape(-1)
-        st_km = stations_a / 1000.0
-        periods = 1.0 / np.clip(freqs_a, 1e-30, None)
-        X, Y = np.meshgrid(st_km, periods)
-        data = np.ma.masked_invalid(np.asarray(rho, dtype=float))
+        rho_a = np.asarray(rho, dtype=float)
+
+        expected_shape = (freqs_a.size, stations_a.size)
+        if rho_a.shape != expected_shape:
+            raise ValueError(
+                f"Panel {label!r}: expected shape "
+                f"{expected_shape}, got {rho_a.shape}"
+            )
+
+        data = np.ma.masked_invalid(rho_a)
+
         last_pcm = ax.pcolormesh(
-            X, Y, data, shading="auto", cmap=cmap, vmin=vmin_u, vmax=vmax_u
+            X,
+            Y,
+            data,
+            shading="auto",
+            cmap=cmap,
+            vmin=vmin_u,
+            vmax=vmax_u,
         )
+
         ax.set_yscale("log")
-        ax.set_xlabel("Distance (km)")
-        ax.set_ylabel("Period (s)")
-        ax.set_title(label)
+        ax.set_xlabel(
+            "Distance (km)",
+            fontsize=label_fontsize,
+        )
+        ax.set_ylabel(
+            "Period (s)",
+            fontsize=label_fontsize,
+        )
+        ax.set_title(
+            label,
+            fontsize=title_fontsize,
+        )
+        ax.tick_params(
+            axis="both",
+            which="both",
+            labelsize=tick_fontsize,
+        )
         ax.invert_yaxis()
-    
+
     if last_pcm is not None:
-        # ✅ colorbar 放在单独预留的 GridSpec 位置
         cax = fig.add_subplot(gs[0, -1])
-        fig.colorbar(last_pcm, cax=cax, label="ρ_a (Ω·m)")
-    
+        cb = fig.colorbar(last_pcm, cax=cax)
+        cb.set_label(
+            "ρₐ (Ω·m)",
+            fontsize=colorbar_label_fontsize,
+        )
+        cb.ax.tick_params(
+            labelsize=colorbar_tick_fontsize,
+        )
+
     if suptitle:
-        fig.suptitle(suptitle, fontsize=18, y=1.02) 
-    
-    plt.tight_layout()
-    
+        fig.suptitle(
+            suptitle,
+            fontsize=suptitle_fontsize,
+        )
+
     if show:
         plt.show()
-    return np.array(axes)
 
+    return np.asarray(axes, dtype=object)
 
 def plot_ot_mse_pseudosection_from_npz(
     npz_ot: Union[str, Path],

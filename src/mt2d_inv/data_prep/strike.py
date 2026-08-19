@@ -132,7 +132,7 @@ class StrikeMixin:
         mt: "PrepareData.CustomMT",
         skew_threshold: float = 5.0,
     ) -> np.ndarray:
-        """返回所有频率的走向，但不符合2D条件的设为 NaN。"""
+        """Return strike at all frequencies; set NaN where the 2-D condition is not met."""
 
         strikes: list[float] = []
         for i in range(len(mt.frequency)):

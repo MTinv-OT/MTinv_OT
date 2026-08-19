@@ -1,8 +1,8 @@
-# 总场法二维正演，全自动微分 (全稀疏优化 + 频点多线程并行版)
+# 2D total-field forward modelling with full autodiff
+# (sparse operators + frequency-parallel ThreadPool).
 import os
-# 【极度关键】：为了防止底层 C++ 数学库（如 MKL/OpenMP）自带的多线程
-# 与我们 Python 层面的多线程抢夺 CPU 核心导致“线程过载(Oversubscription)”变卡，
-# 我们将底层数学库的单次求解限制为单线程，将算力全部分配给我们的频点并行池。
+# Pin BLAS/OpenMP to one thread per solve so the C++ math libraries
+# do not oversubscribe CPU cores against the Python frequency pool.
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -27,14 +27,11 @@ except ImportError:
 torch.set_default_dtype(torch.float64)
 
 # ==========================================
-# 全稀疏自动微分求解器模块 (CPU 伴随状态法 - SOTA 复数原生版)
+# Sparse autodiff solver (CPU adjoint / native complex)
 # ==========================================
 
 class SparseSolveComplex(torch.autograd.Function):
-    """
-    全稀疏复数线性方程组求解器：解 Ax = b
-    基于 Wirtinger 微积分的复数伴随状态法，彻底摒弃实数化展开。
-    """
+    """Sparse complex linear solver for Ax = b using Wirtinger adjoints."""
     @staticmethod
     def forward(ctx, indices, values, size_N, b):
         idx_np = indices.detach().cpu().numpy()
@@ -96,7 +93,7 @@ def complex_sparse_solve(indices, values_complex, b_complex, N):
 
 
 # ==========================================
-# 主模型类 (极致优化版: 拓扑预计算 + 1D 原生求解)
+# Main forward class (precomputed topology + native 1D BC solves)
 # ==========================================
 class MT2DFD_Torch(nn.Module):
     def __init__(self, nza, zn, yn, freq, ry, sig, device='cpu'):
@@ -120,7 +117,7 @@ class MT2DFD_Torch(nn.Module):
             raise ValueError(f"Sigma size mismatch. Expected ({self.nz-1}, {self.ny-1}), got {self.sig.shape}")
 
         # --------------------------------------------------------------------------
-        # 【SOTA 核心优化】: TE 与 TM 网格分别独立预计算
+        # Precompute TE and TM grids independently
         # --------------------------------------------------------------------------
         self._precompute_geometry()
 
@@ -128,7 +125,7 @@ class MT2DFD_Torch(nn.Module):
         ny, nz = self.ny - 1, self.nz - 1
         
         # =====================================================
-        # 1. TE 模式预计算 (保留完整的空气层)
+        # 1. TE precompute (keep the air layers)
         # =====================================================
         self.dy0 = self.dy.view(1, -1).repeat(nz, 1)
         self.dz0 = self.dz.view(-1, 1).repeat(1, ny)
@@ -176,7 +173,7 @@ class MT2DFD_Torch(nn.Module):
         ], dim=1)
 
         # =====================================================
-        # 2. TM 模式预计算 (完全切除空气层)
+        # 2. TM precompute (air layers removed)
         # =====================================================
         nz_tm = nz - self.nza
         dz_tm = self.dz[self.nza:]
@@ -213,16 +210,13 @@ class MT2DFD_Torch(nn.Module):
             torch.stack([self.tm_row_idy, self.tm_col_idy]), torch.stack([self.tm_col_idy, self.tm_row_idy])
         ], dim=1)
         # --------------------------------------------------------------------------
-        # 【极其关键的多线程安全补丁】：强行预热 PyTorch 的线性代数底层库 (LAPACK/cuSOLVER)
-        # --------------------------------------------------------------------------
-        # 解决报错 "RuntimeError: lazy wrapper should be called at most once"
-        # 因为后续我们在 ThreadPoolExecutor 里会并发调用 torch.linalg.solve，
-        # 如果这是 PyTorch 生命周期里的第一次调用，多线程并发的“懒加载(Lazy Init)”会导致底层 C++ 句柄竞态冲突。
-        # 我们在这里用主线程解一个 2x2 的废弃矩阵，强行激活它的环境。
+        # Warm up torch.linalg.solve on the main thread so the first
+        # ThreadPoolExecutor call does not hit lazy-init races
+        # ("RuntimeError: lazy wrapper should be called at most once").
         _dummy_A = torch.eye(2, dtype=torch.complex128, device=self.device)
         _dummy_B = torch.ones((2, 1), dtype=torch.complex128, device=self.device)
         _ = torch.linalg.solve(_dummy_A, _dummy_B)
-        # 疫苗注射完毕。
+        # Warm-up complete.
 
     def forward(self, mode="TETM"):
         res = {}
@@ -490,7 +484,7 @@ class MT2DFD_Torch(nn.Module):
         return hx_full
 
     # --------------------------------------------------------------------------
-    # 1D 边界条件求解器 (极其轻量化，全面转为 Torch 稠密原生求解)
+    # Lightweight 1D boundary-condition solver (dense torch)
     # --------------------------------------------------------------------------
     def mt1dte_solver(self, freq, dz, sig):
         omega = 2.0 * np.pi * freq
@@ -504,18 +498,18 @@ class MT2DFD_Torch(nn.Module):
         term2 = -2.0 / dz_ext[:-1] - 2.0 / dz_ext[1:]
         diag = term1 + term2
         
-        # 1D 有限差分的三对角元素，次对角线长度必须等于 nz - 1
+        # 1D FD tridiagonal: off-diagonals have length nz - 1
         off_upper = (2.0 / dz_ext[1:-1]).to(torch.complex128)
         off_lower = off_upper.clone() 
         
-        # 构建稠密三对角矩阵
+        # Build a dense tridiagonal matrix
         A_dense = torch.diag(diag) + torch.diag(off_upper, 1) + torch.diag(off_lower, -1)
         
         val0 = (-2.0 / dz_ext[0]).view(1, 1).to(torch.complex128)
         zeros_rest = torch.zeros((nz-1, 1), dtype=torch.complex128, device=self.device)
         rhs = torch.cat([val0, zeros_rest], dim=0)
         
-        # 原生 Torch 求解
+        # Native torch solve
         res = torch.linalg.solve(A_dense, rhs)
         return torch.cat([torch.tensor([[1.0]], device=self.device, dtype=torch.complex128), res], dim=0)
 
@@ -531,17 +525,17 @@ class MT2DFD_Torch(nn.Module):
         term2 = -2.0 / (dz_ext[:-1]*sig_ext[:-1]) - 2.0 / (dz_ext[1:]*sig_ext[1:])
         diag = term1 + term2
         
-        # 次对角线长度必须等于 nz - 1
+        # Off-diagonals must have length nz - 1
         off_upper = (2.0 / (dz_ext[1:-1]*sig_ext[1:-1])).to(torch.complex128)
         off_lower = off_upper.clone()
         
-        # 构建稠密三对角矩阵
+        # Build a dense tridiagonal matrix
         A_dense = torch.diag(diag) + torch.diag(off_upper, 1) + torch.diag(off_lower, -1)
         
         val0 = (-2.0 / (dz_ext[0] * sig_ext[0])).view(1, 1).to(torch.complex128)
         zeros_rest = torch.zeros((nz-1, 1), dtype=torch.complex128, device=self.device)
         rhs = torch.cat([val0, zeros_rest], dim=0)
         
-        # 原生 Torch 求解
+        # Native torch solve
         res = torch.linalg.solve(A_dense, rhs)
         return torch.cat([torch.tensor([[1.0]], device=self.device, dtype=torch.complex128), res], dim=0)

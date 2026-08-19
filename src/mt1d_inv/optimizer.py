@@ -1,11 +1,11 @@
 """
-优化器配置和损失函数模块（改进版）
+Optimizer configuration and loss function module (improved)
 
-改进点:
-1. ✅ 添加学习率调度器
-2. ✅ 更好的参数初始化建议
-3. ✅ 梯度监控功能
-4. ✅ 可选的geomloss依赖
+Improvements:
+1. ✅ Add learning-rate scheduler
+2. ✅ Better parameter-initialization suggestions
+3. ✅ Gradient monitoring
+4. ✅ Optional geomloss dependency
 """
 
 import torch
@@ -13,27 +13,27 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import List, Tuple, Optional, Dict
 
-# 可选的geomloss导入
+# Optional geomloss import
 try:
     from geomloss import SamplesLoss
     GEOMLOSS_AVAILABLE = True
 except ImportError:
     GEOMLOSS_AVAILABLE = False
-    print("⚠️  geomloss未安装,Sinkhorn损失不可用")
+    print("⚠️  geomloss is not installed; Sinkhorn loss is unavailable")
 
 
 class OptimizerConfig:
     """
-    优化器配置类（改进版）
+    Optimizer configuration class (improved)
     
-    新增功能:
-    - 学习率调度器
-    - 梯度监控
-    - 自适应优化器选择
+    New features:
+    - Learning-rate scheduler
+    - Gradient monitoring
+    - Adaptive optimizer selection
     """
     
     def __init__(self, device: str = "cpu"):
-        """初始化"""
+        """Initialize"""
         self.device = device
         self.optimizer = None
         self.scheduler = None
@@ -42,7 +42,7 @@ class OptimizerConfig:
         self.sinkhorn_loss = None
         self.data_loss_fn = None
         
-        # 梯度监控
+        # Gradient monitoring
         self.grad_history = []
     
     def create_optimizer(self, 
@@ -54,19 +54,19 @@ class OptimizerConfig:
                         eps: float = 1e-8,
                         momentum: float = 0.9) -> optim.Optimizer:
         """
-        创建优化器
+        Create an optimizer
         
-        参数:
-            params: 待优化参数
+        Args:
+            params: parameters to optimize
             optimizer_type: 'Adam', 'AdamW', 'SGD', 'RMSprop', 'LBFGS'
-            lr: 学习率
-            weight_decay: L2正则化系数
-            betas: Adam系列的动量参数
-            eps: 数值稳定性
-            momentum: SGD/RMSprop的动量
+            lr: learning rate
+            weight_decay: L2 regularization coefficient
+            betas: momentum parameters for Adam-family optimizers
+            eps: numerical stability
+            momentum: momentum for SGD/RMSprop
         
-        返回:
-            optimizer: 优化器实例
+        Returns:
+            optimizer: optimizer instance
         """
         if optimizer_type == "Adam":
             optimizer = optim.Adam(
@@ -94,15 +94,15 @@ class OptimizerConfig:
                 history_size=10, line_search_fn="strong_wolfe"
             )
         else:
-            raise ValueError(f"不支持的优化器: {optimizer_type}")
+            raise ValueError(f"Unsupported optimizer: {optimizer_type}")
         
         self.optimizer = optimizer
         self.optimizer_type = optimizer_type
         self.learning_rate = lr
         
-        print(f"✓ 创建优化器: {optimizer_type}")
-        print(f"  - 学习率: {lr}")
-        print(f"  - 权重衰减: {weight_decay}")
+        print(f"✓ Created optimizer: {optimizer_type}")
+        print(f"  - Learning rate: {lr}")
+        print(f"  - Weight decay: {weight_decay}")
         
         return optimizer
     
@@ -113,19 +113,19 @@ class OptimizerConfig:
                         min_lr: float = 1e-6,
                         **kwargs):
         """
-        创建学习率调度器
+        Create a learning-rate scheduler
         
-        参数:
+        Args:
             scheduler_type: 'ReduceLROnPlateau', 'StepLR', 'CosineAnnealing'
-            factor: 学习率衰减因子
-            patience: 容忍轮数
-            min_lr: 最小学习率
+            factor: learning-rate decay factor
+            patience: number of epochs to wait
+            min_lr: minimum learning rate
         
-        返回:
-            scheduler: 调度器实例
+        Returns:
+            scheduler: scheduler instance
         """
         if self.optimizer is None:
-            raise ValueError("请先创建优化器")
+            raise ValueError("Please create an optimizer first")
         
         if scheduler_type == "ReduceLROnPlateau":
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -157,10 +157,10 @@ class OptimizerConfig:
                 gamma=gamma
             )
         else:
-            raise ValueError(f"不支持的调度器: {scheduler_type}")
+            raise ValueError(f"Unsupported scheduler: {scheduler_type}")
         
         self.scheduler = scheduler
-        print(f"✓ 创建学习率调度器: {scheduler_type}")
+        print(f"✓ Created learning-rate scheduler: {scheduler_type}")
         
         return scheduler
     
@@ -172,21 +172,21 @@ class OptimizerConfig:
                             debias: bool = True,
                             backend: str = "tensorized") -> Optional[SamplesLoss]:
         """
-        创建Sinkhorn损失（如果geomloss可用）
+        Create a Sinkhorn loss (if geomloss is available)
         
-        参数:
-            p: 距离的p范数
-            blur: 模糊参数(熵正则化)
-            scaling: Sinkhorn迭代缩放
-            reach: 非平衡OT松弛距离。None=平衡OT(质量守恒,默认); >0(如1.0)=非平衡OT(不要求质量守恒)
-            debias: 是否去偏
+        Args:
+            p: p-norm of the distance
+            blur: blur parameter (entropic regularization)
+            scaling: Sinkhorn iteration scaling
+            reach: unbalanced OT reach. None=balanced OT (mass conservation, default); >0 (e.g. 1.0)=unbalanced OT (mass conservation not required)
+            debias: whether to debias
             backend: 'tensorized', 'online', 'multiscale'
         
-        返回:
-            sinkhorn_loss: Sinkhorn损失实例或None
+        Returns:
+            sinkhorn_loss: Sinkhorn loss instance or None
         """
         if not GEOMLOSS_AVAILABLE:
-            print("⚠️  geomloss未安装,无法使用Sinkhorn损失")
+            print("⚠️  geomloss is not installed; cannot use Sinkhorn loss")
             return None
         
         sinkhorn_loss = SamplesLoss(
@@ -201,30 +201,30 @@ class OptimizerConfig:
         
         self.sinkhorn_loss = sinkhorn_loss
         
-        print(f"✓ 创建Sinkhorn损失:")
-        print(f"  - p范数: {p}")
+        print(f"✓ Created Sinkhorn loss:")
+        print(f"  - p-norm: {p}")
         print(f"  - blur: {blur}")
         print(f"  - scaling: {scaling}")
-        print(f"  - reach: {reach} ({'非平衡/不质量守恒' if reach else '平衡/质量守恒'})")
+        print(f"  - reach: {reach} ({'unbalanced / no mass conservation' if reach else 'balanced / mass conservation'})")
         
         return sinkhorn_loss
     
     def create_data_loss(self, p: int = 2) -> nn.Module:
         """
-        创建标准数据损失
+        Create a standard data loss
         
-        参数:
+        Args:
             p: 1=L1, 2=MSE
         
-        返回:
-            loss_fn: 损失函数
+        Returns:
+            loss_fn: loss function
         """
         if p == 1:
             loss_fn = nn.L1Loss()
-            print("✓ 创建L1损失")
+            print("✓ Created L1 loss")
         else:
             loss_fn = nn.MSELoss()
-            print("✓ 创建MSE损失")
+            print("✓ Created MSE loss")
         
         self.data_loss_fn = loss_fn
         return loss_fn
@@ -234,15 +234,15 @@ class OptimizerConfig:
                       max_norm: float = 10.0,
                       record: bool = False) -> float:
         """
-        梯度裁剪
+        Gradient clipping
         
-        参数:
-            parameters: 参数列表
-            max_norm: 最大梯度范数
-            record: 是否记录梯度历史
+        Args:
+            parameters: parameter list
+            max_norm: maximum gradient norm
+            record: whether to record gradient history
         
-        返回:
-            grad_norm: 裁剪前的梯度范数
+        Returns:
+            grad_norm: gradient norm before clipping
         """
         grad_norm = torch.nn.utils.clip_grad_norm_(parameters, max_norm=max_norm)
         
@@ -257,13 +257,13 @@ class OptimizerConfig:
                         max_val: Optional[float] = None,
                         use_log_space: bool = False) -> None:
         """
-        参数范围约束
+        Parameter range constraint
         
-        参数:
-            parameters: 参数张量
-            min_val: 最小值
-            max_val: 最大值
-            use_log_space: 是否在对数空间
+        Args:
+            parameters: parameter tensor
+            min_val: minimum value
+            max_val: maximum value
+            use_log_space: whether in log space
         """
         with torch.no_grad():
             if min_val is not None:
@@ -273,10 +273,10 @@ class OptimizerConfig:
     
     def step_scheduler(self, metric: Optional[float] = None):
         """
-        学习率调度器步进
+        Learning-rate scheduler step
         
-        参数:
-            metric: 监控指标(用于ReduceLROnPlateau)
+        Args:
+            metric: monitored metric (for ReduceLROnPlateau)
         """
         if self.scheduler is None:
             return
@@ -288,13 +288,13 @@ class OptimizerConfig:
             self.scheduler.step()
     
     def get_current_lr(self) -> float:
-        """获取当前学习率"""
+        """Get current learning rate"""
         if self.optimizer is None:
             return None
         return self.optimizer.param_groups[0]['lr']
     
     def get_grad_stats(self) -> Dict[str, float]:
-        """获取梯度统计信息"""
+        """Get gradient statistics"""
         if not self.grad_history:
             return {}
         
@@ -313,14 +313,14 @@ class OptimizerConfig:
     def suggest_learning_rate(parameter_count: int, 
                              optimizer_type: str = "Adam") -> float:
         """
-        根据参数数量建议学习率
+        Suggest a learning rate based on the number of parameters
         
-        参数:
-            parameter_count: 参数总数
-            optimizer_type: 优化器类型
+        Args:
+            parameter_count: total number of parameters
+            optimizer_type: optimizer type
         
-        返回:
-            suggested_lr: 建议的学习率
+        Returns:
+            suggested_lr: suggested learning rate
         """
         if optimizer_type in ["Adam", "AdamW"]:
             if parameter_count < 1000:
@@ -340,52 +340,52 @@ class OptimizerConfig:
             return 0.01
     
     def print_config(self):
-        """打印当前配置"""
+        """Print current configuration"""
         print("\n" + "="*50)
-        print("优化器配置")
+        print("Optimizer configuration")
         print("="*50)
-        print(f"优化器类型: {self.optimizer_type}")
-        print(f"学习率: {self.learning_rate}")
-        print(f"当前学习率: {self.get_current_lr()}")
-        print(f"调度器: {type(self.scheduler).__name__ if self.scheduler else 'None'}")
-        print(f"数据损失: {type(self.data_loss_fn).__name__ if self.data_loss_fn else 'None'}")
-        print(f"Sinkhorn损失: {'可用' if self.sinkhorn_loss else '不可用'}")
+        print(f"Optimizer type: {self.optimizer_type}")
+        print(f"Learning rate: {self.learning_rate}")
+        print(f"Current learning rate: {self.get_current_lr()}")
+        print(f"Scheduler: {type(self.scheduler).__name__ if self.scheduler else 'None'}")
+        print(f"Data loss: {type(self.data_loss_fn).__name__ if self.data_loss_fn else 'None'}")
+        print(f"Sinkhorn loss: {'available' if self.sinkhorn_loss else 'unavailable'}")
         print("="*50)
 
 
-# 测试代码
+# Test code
 if __name__ == "__main__":
-    print("优化器配置测试\n")
+    print("Optimizer configuration test\n")
     
-    # 创建配置
+    # Create configuration
     config = OptimizerConfig(device='cpu')
     
-    # 创建示例参数
+    # Create sample parameters
     test_params = [torch.randn(100, 100, requires_grad=True)]
     
-    # 创建优化器
+    # Create optimizer
     optimizer = config.create_optimizer(
         test_params,
         optimizer_type="Adam",
         lr=0.01
     )
     
-    # 创建调度器
+    # Create scheduler
     scheduler = config.create_scheduler(
         scheduler_type="ReduceLROnPlateau",
         patience=10
     )
     
-    # 创建损失函数
+    # Create loss functions
     mse_loss = config.create_data_loss(p=2)
     sinkhorn_loss = config.create_sinkhorn_loss(p=2, blur=0.05)
     
-    # 打印配置
+    # Print configuration
     config.print_config()
     
-    # 学习率建议
-    print(f"\n参数数量: {sum(p.numel() for p in test_params)}")
+    # Learning-rate suggestion
+    print(f"\nParameter count: {sum(p.numel() for p in test_params)}")
     suggested_lr = config.suggest_learning_rate(10000, "Adam")
-    print(f"建议学习率: {suggested_lr}")
+    print(f"Suggested learning rate: {suggested_lr}")
     
-    print("\n✓ 测试完成")
+    print("\n✓ Test completed")

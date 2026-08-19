@@ -5,16 +5,16 @@ import torch
 import math
 from typing import Any, Tuple, Optional
 
-def visualize_1d_model(model, title="地球物理电性模型"):
+def visualize_1d_model(model, title="Geophysical electrical model"):
     """
-    可视化一维模型（从MT1D类移出）
+    Visualize a 1D model (moved out of the MT1D class)
     """
-    # 计算各层深度
+    # Compute layer depths
     depths = [0]
     for i, thickness in enumerate[Any](model.dz):
         depths.append(depths[i] + thickness.item())
     
-    # 扩展电导率用于绘图
+    # Expand conductivity for plotting
     sig_plot = []
     for i in range(model.n_layers + 1):
         sig_plot.append(model.sig[i].item())
@@ -26,17 +26,17 @@ def visualize_1d_model(model, title="地球物理电性模型"):
         depth_plot.append(depth)
         depth_plot.append(depth)
     
-    # 创建图表
+    # Create the figure
     plt.figure(figsize=(10, 6))
     plt.plot(sig_plot, depth_plot, 'r-', linewidth=2)
     plt.yscale('linear')
     plt.gca().invert_yaxis()
     plt.xlabel('sig (S/m)')
     plt.ylabel('dz (m)')
-    plt.title("1D True model")   # 再设置标题
+    plt.title("1D True model")   # then set the title
     plt.grid(True, which='both', linestyle='--', alpha=0.5)
     
-    # 添加层边界线
+    # Add layer-boundary lines
     for depth in depths[1:-1]:
         plt.axhline(y=depth, color='k', linestyle='-', alpha=0.3)
     
@@ -45,12 +45,12 @@ def visualize_1d_model(model, title="地球物理电性模型"):
 
 class MT1D_3DVisualizer:
     """
-    MT 三维可视化类
-    用于绘制视电阻率、相位和频率的三维点云图
+    MT 3D visualization class
+    Plot 3D point clouds of apparent resistivity, phase, and frequency
     """
     
-    # 常量定义
-    MU = 4e-7 * math.pi  # 磁导率
+    # Constants
+    MU = 4e-7 * math.pi  # magnetic permeability
     PI = math.pi
     
     def __init__(self, device: str = None):
@@ -58,17 +58,17 @@ class MT1D_3DVisualizer:
     
     def mt1d_forward(self, freq: torch.Tensor, dz: torch.Tensor, sig: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        MT 1D 正演计算
+        MT 1D forward modeling
         
-        参数:
-            freq: 频率张量
-            dz: 厚度张量
-            sig: 电导率张量
+        Args:
+            freq: frequency tensor
+            dz: thickness tensor
+            sig: conductivity tensor
             
-        返回:
-            zxy: 阻抗张量
-            rho: 视电阻率张量
-            phs: 相位张量
+        Returns:
+            zxy: impedance tensor
+            rho: apparent resistivity tensor
+            phs: phase tensor
         """
         nf = len(freq)
         zxy = torch.zeros(nf, dtype=torch.complex64, device=self.device)
@@ -80,11 +80,11 @@ class MT1D_3DVisualizer:
         for kf in range(nf):
             omega = 2.0 * self.PI * freq[kf]
             
-            # 计算半空间阻抗
+            # Half-space impedance
             sqrt_arg = torch.complex(torch.tensor(0.0, device=self.device), -omega * self.MU) / sig[-1]
             Z = torch.sqrt(sqrt_arg)
             
-            # 从底层向上递归计算阻抗
+            # Recurse impedance from the bottom layer upward
             for m in range(n_layers-2, -1, -1):
                 km_arg = torch.complex(torch.tensor(0.0, device=self.device), omega * self.MU * sig[m])
                 km = torch.sqrt(km_arg)
@@ -102,47 +102,47 @@ class MT1D_3DVisualizer:
     def create_3d_pointcloud_from_data(self, freq: torch.Tensor, rho: torch.Tensor, phs: torch.Tensor, 
                                      title: str = "MT 3D Point Cloud") -> plt.Figure:
         """
-        从视电阻率、相位和频率数据创建三维点云
+        Create a 3D point cloud from apparent resistivity, phase, and frequency
         
-        参数:
-            freq: 频率数据
-            rho: 视电阻率数据
-            phs: 相位数据
-            title: 图表标题
+        Args:
+            freq: frequency data
+            rho: apparent resistivity data
+            phs: phase data
+            title: figure title
             
-        返回:
-            fig:  matplotlib图形对象
+        Returns:
+            fig: matplotlib figure object
         """
-        # 转换为numpy数组
+        # Convert to numpy arrays
         freq_np = freq.detach().cpu().numpy() if torch.is_tensor(freq) else np.array(freq)
         rho_np = rho.detach().cpu().numpy() if torch.is_tensor(rho) else np.array(rho)
         phs_np = phs.detach().cpu().numpy() if torch.is_tensor(phs) else np.array(phs)
         
-        # 创建三维图形
+        # Create 3D figure
         fig = plt.figure(figsize=(13, 9))
         ax = fig.add_subplot(111, projection='3d')
 
-        # 创建散点图，颜色映射根据频率
+        # Scatter plot, colored by frequency
         scatter = ax.scatter(np.log10(rho_np), phs_np, np.log10(freq_np), 
                            c=np.log10(freq_np), cmap='jet', 
                            s=50, alpha=0.8, marker='o')
         
-        # 设置坐标轴标签
+        # Axis labels
         ax.set_xlabel('log10(Apparent Resistivity [Ω·m])', fontsize=15, labelpad=15)
         ax.set_ylabel('Phase [degrees]', fontsize=15, labelpad=15)
         ax.set_zlabel('log10(Frequency [Hz])', fontsize=15, labelpad=0, rotation=180)
         
-        # 设置标题
+        # Title
         ax.set_title(title, fontsize=25, pad=10)
         
-        # 添加颜色条
+        # Colorbar
         cbar = fig.colorbar(scatter, ax=ax, shrink=0.6, aspect=20, pad=0.1)
         cbar.set_label('log10(Frequency [Hz])', fontsize=15)
         
-        # 设置视角
+        # View angle
         ax.view_init(elev=20, azim=30)
         
-        # 添加网格
+        # Grid
         ax.grid(True, alpha=0.3)
         
         plt.tight_layout()
@@ -151,21 +151,21 @@ class MT1D_3DVisualizer:
     def create_3d_pointcloud_from_model(self, freq: torch.Tensor, dz: torch.Tensor, sig: torch.Tensor,
                                       title: str = "MT 3D Point Cloud from Model") -> plt.Figure:
         """
-        从电阻率模型通过正演计算创建三维点云
+        Create a 3D point cloud from a resistivity model via forward modeling
         
-        参数:
-            freq: 频率数据
-            dz: 层厚度
-            sig: 电导率
-            title: 图表标题
+        Args:
+            freq: frequency data
+            dz: layer thicknesses
+            sig: conductivity
+            title: figure title
             
-        返回:
-            fig: matplotlib图形对象
+        Returns:
+            fig: matplotlib figure object
         """
-        # 正演计算
+        # Forward modeling
         zxy, rho, phs = self.mt1d_forward(freq, dz, sig)
         
-        # 创建三维点云
+        # Create 3D point cloud
         fig = self.create_3d_pointcloud_from_data(freq, rho, phs, title)
         
         return fig
@@ -176,56 +176,56 @@ class MT1D_3DVisualizer:
                                     title: str = "MT 3D Point Cloud Comparison",
                                     save_path: Optional[str] = None) -> plt.Figure:
         """
-        绘制观测数据和模型预测数据的对比三维点云
+        Plot a 3D point-cloud comparison of observed and model-predicted data
         
-        参数:
-            freq: 频率数据
-            rho_obs: 观测视电阻率
-            phs_obs: 观测相位
-            dz_model: 模型层厚度
-            sig_model: 模型电导率
-            title: 图表标题
-            save_path: 图片保存路径（可选）
-        返回:
-            fig: matplotlib图形对象
+        Args:
+            freq: frequency data
+            rho_obs: observed apparent resistivity
+            phs_obs: observed phase
+            dz_model: model layer thicknesses
+            sig_model: model conductivity
+            title: figure title
+            save_path: image save path (optional)
+        Returns:
+            fig: matplotlib figure object
         """
-        # 正演计算模型预测数据
+        # Forward-model predicted data
         zxy_pred, rho_pred, phs_pred = self.mt1d_forward(freq, dz_model, sig_model)
         
-        # 转换为numpy数组
+        # Convert to numpy arrays
         freq_np = freq.detach().cpu().numpy() if torch.is_tensor(freq) else np.array(freq)
         rho_obs_np = rho_obs.detach().cpu().numpy() if torch.is_tensor(rho_obs) else np.array(rho_obs)
         phs_obs_np = phs_obs.detach().cpu().numpy() if torch.is_tensor(phs_obs) else np.array(phs_obs)
         rho_pred_np = rho_pred.detach().cpu().numpy() if torch.is_tensor(rho_pred) else np.array(rho_pred)
         phs_pred_np = phs_pred.detach().cpu().numpy() if torch.is_tensor(phs_pred) else np.array(phs_pred)
         
-        # 创建三维图形
+        # Create 3D figure
         fig = plt.figure(figsize=(14, 10))
         ax = fig.add_subplot(111, projection='3d')
         
-        # 绘制观测数据点（红色）
+        # Observed data (red)
         scatter_obs = ax.scatter(np.log10(rho_obs_np), phs_obs_np, np.log10(freq_np), 
                                c='red', s=60, alpha=0.8, marker='o', label='Observed Data')
         
-        # 绘制模型预测数据点（蓝色）
+        # Model-predicted data (blue)
         scatter_pred = ax.scatter(np.log10(rho_pred_np), phs_pred_np, np.log10(freq_np), 
                                 c='blue', s=60, alpha=0.6, marker='^', label='Model Prediction')
         
-        # 设置坐标轴标签
+        # Axis labels
         ax.set_xlabel('log10(Apparent Resistivity [Ω·m])', fontsize=12, labelpad=15)
         ax.set_ylabel('Phase [degrees]', fontsize=12, labelpad=15,rotation=180)
         ax.set_zlabel('log10(Frequency [Hz])', fontsize=12, labelpad=1, rotation=0)
 
-        # 设置标题
+        # Title
         ax.set_title(title, fontsize=14, pad=15)
         
-        # 添加图例
+        # Legend
         ax.legend(fontsize=12, loc='upper left')
         
-        # 设置视角
+        # View angle
         ax.view_init(elev=20, azim=30)
         
-        # 添加网格
+        # Grid
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
@@ -239,28 +239,28 @@ class MT1D_3DVisualizer:
                                     title: str = "MT 3D Point Cloud with Connections",
                                     save_path: Optional[str] = None) -> plt.Figure:
         """
-        绘制观测数据和模型预测数据的对比三维点云，并连接对应的点
-        左右各增加一个空白子图
+        Plot a 3D point-cloud comparison of observed and model-predicted data,
+        connecting corresponding points. Add a blank subplot on each side.
         """
-        # 正演计算模型预测数据
+        # Forward-model predicted data
         zxy_pred, rho_pred, phs_pred = self.mt1d_forward(freq, dz_model, sig_model)
 
-        # 转换为numpy数组
+        # Convert to numpy arrays
         freq_np = freq.detach().cpu().numpy() if torch.is_tensor(freq) else np.array(freq)
         rho_obs_np = rho_obs.detach().cpu().numpy() if torch.is_tensor(rho_obs) else np.array(rho_obs)
         phs_obs_np = phs_obs.detach().cpu().numpy() if torch.is_tensor(phs_obs) else np.array(phs_obs)
         rho_pred_np = rho_pred.detach().cpu().numpy() if torch.is_tensor(rho_pred) else np.array(rho_pred)
         phs_pred_np = phs_pred.detach().cpu().numpy() if torch.is_tensor(phs_pred) else np.array(phs_pred)
 
-        # 创建GridSpec布局
+        # GridSpec layout
         fig = plt.figure(figsize=(16, 10))
         gs = gridspec.GridSpec(1, 3, width_ratios=[1, 4, 1])
 
-        # 左侧空白子图
+        # Left blank subplot
         ax_left = fig.add_subplot(gs[0], frameon=False)
         ax_left.axis('off')
 
-        # 主三维图
+        # Main 3D plot
         ax = fig.add_subplot(gs[1], projection='3d')
         scatter_obs = ax.scatter(np.log10(rho_obs_np), phs_obs_np, np.log10(freq_np), 
                                 c='red', s=60, alpha=0.8, marker='o', label='Observed Data')
@@ -280,7 +280,7 @@ class MT1D_3DVisualizer:
         ax.view_init(elev=20, azim=45)
         ax.grid(True, alpha=0.3)
 
-        # 右侧空白子图
+        # Right blank subplot
         ax_right = fig.add_subplot(gs[2], frameon=False)
         ax_right.axis('off')
 
@@ -294,64 +294,64 @@ class MT1D_3DVisualizer:
                         label: str = "Data", color: str = 'blue',
                         figsize: tuple = (10, 6)) -> plt.Figure:
         """
-        绘制视电阻率-频率二维图
+        Plot 2D apparent resistivity vs frequency
         
-        参数:
-            freq: 频率数据
-            rho: 视电阻率数据
-            title: 图表标题
-            label: 数据标签
-            color: 线条颜色
-            figsize: 图形尺寸
+        Args:
+            freq: frequency data
+            rho: apparent resistivity data
+            title: figure title
+            label: data label
+            color: line color
+            figsize: figure size
             
-        返回:
-            fig: matplotlib图形对象
+        Returns:
+            fig: matplotlib figure object
         """
-        # 转换为numpy数组
+        # Convert to numpy arrays
         freq_np = freq.detach().cpu().numpy() if torch.is_tensor(freq) else np.array(freq)
         rho_np = rho.detach().cpu().numpy() if torch.is_tensor(rho) else np.array(rho)
         
-        # 创建图形
+        # Create figure
         fig, ax = plt.subplots(figsize=figsize)
         
-        # 绘制双对数坐标图
+        # Log-log plot
         ax.loglog(freq_np, rho_np, 'o-', color=color, markersize=6, linewidth=2, label=label)
         
-        # 设置坐标轴标签
+        # Axis labels
         ax.set_xlabel('Frequency [Hz]', fontsize=12)
         ax.set_ylabel('Apparent Resistivity [Ω·m]', fontsize=12)
         
-        # 设置标题
+        # Title
         ax.set_title(title, fontsize=14)
         
-        # 添加网格
+        # Grid
         ax.grid(True, which='both', alpha=0.3)
         
-        # 添加图例
+        # Legend
         if label:
             ax.legend(fontsize=10)
         
         plt.tight_layout()
         return fig
 
-    # 文件：src/mt1d_inv/visualize.py
+    # File: src/mt1d_inv/visualize.py
 
     def plot_sensitivity_matrix(self, J, z_grid, freqs, save_path=None):
         """
-        绘制灵敏度矩阵热力图
+        Plot a sensitivity-matrix heatmap
         Args:
-            J: 灵敏度矩阵 [n_freq, n_layer]
-            z_grid: 深度网格 [n_layer + 1]
-            freqs: 频率列表
+            J: sensitivity matrix [n_freq, n_layer]
+            z_grid: depth grid [n_layer + 1]
+            freqs: frequency list
         """
         fig, ax = plt.subplots(figsize=(10, 6))
         
-        # 使用 pcolormesh 或 imshow
-        # 注意：通常横轴是深度(层)，纵轴是频率(周期)
+        # Use pcolormesh or imshow
+        # Note: typically the x-axis is depth (layer) and the y-axis is frequency (period)
         
-        # 为了画图方便，构建网格
-        # y轴：频率索引 (0 到 n_freq)
-        # x轴：层索引 (0 到 n_layer)
+        # Build a grid for convenience
+        # y-axis: frequency index (0 to n_freq)
+        # x-axis: layer index (0 to n_layer)
         
         im = ax.imshow(J, aspect='auto', cmap='RdBu_r', origin='upper',
                        extent=[0, len(z_grid)-1, 0, len(freqs)])
@@ -359,12 +359,12 @@ class MT1D_3DVisualizer:
         cbar = plt.colorbar(im, ax=ax)
         cbar.set_label('Sensitivity (Partial Derivative)')
         
-        # 设置轴标签
+        # Axis labels
         ax.set_ylabel('Frequency Index (High -> Low)')
         ax.set_xlabel('Layer Index (Shallow -> Deep)')
         ax.set_title('Sensitivity Matrix (Jacobian)')
         
-        # 可选：把刻度换成真实的频率和深度数值（稍微麻烦点，看你需要不需要）
+        # Optional: replace ticks with actual frequency and depth values (slightly more involved)
         # ax.set_yticks(...)
         
         plt.tight_layout()
@@ -379,40 +379,40 @@ class MT1D_3DVisualizer:
                         label: str = "Data", color: str = 'red',
                         figsize: tuple = (10, 6)) -> plt.Figure:
         """
-        绘制相位-频率二维图
+        Plot 2D phase vs frequency
         
-        参数:
-            freq: 频率数据
-            phs: 相位数据
-            title: 图表标题
-            label: 数据标签
-            color: 线条颜色
-            figsize: 图形尺寸
+        Args:
+            freq: frequency data
+            phs: phase data
+            title: figure title
+            label: data label
+            color: line color
+            figsize: figure size
             
-        返回:
-            fig: matplotlib图形对象
+        Returns:
+            fig: matplotlib figure object
         """
-        # 转换为numpy数组
+        # Convert to numpy arrays
         freq_np = freq.detach().cpu().numpy() if torch.is_tensor(freq) else np.array(freq)
         phs_np = phs.detach().cpu().numpy() if torch.is_tensor(phs) else np.array(phs)
         
-        # 创建图形
+        # Create figure
         fig, ax = plt.subplots(figsize=figsize)
         
-        # 绘制半对数坐标图（频率对数，相位线性）
+        # Semi-log plot (log frequency, linear phase)
         ax.semilogx(freq_np, phs_np, 's-', color=color, markersize=5, linewidth=2, label=label)
         
-        # 设置坐标轴标签
+        # Axis labels
         ax.set_xlabel('Frequency [Hz]', fontsize=12)
         ax.set_ylabel('Phase [degrees]', fontsize=12)
         
-        # 设置标题
+        # Title
         ax.set_title(title, fontsize=14)
         
-        # 添加网格
+        # Grid
         ax.grid(True, which='both', alpha=0.3)
         
-        # 添加图例
+        # Legend
         if label:
             ax.legend(fontsize=10)
         
@@ -424,45 +424,45 @@ class MT1D_3DVisualizer:
                           rho_pred: torch.Tensor, phs_pred: torch.Tensor,
                           title: str = "MT Data Comparison") -> plt.Figure:
         """
-        绘制观测数据和预测数据的二维对比图
+        Plot a 2D comparison of observed and predicted data
         
-        参数:
-            freq: 频率数据
-            rho_obs: 观测视电阻率
-            phs_obs: 观测相位
-            rho_pred: 预测视电阻率
-            phs_pred: 预测相位
-            title: 图表标题
+        Args:
+            freq: frequency data
+            rho_obs: observed apparent resistivity
+            phs_obs: observed phase
+            rho_pred: predicted apparent resistivity
+            phs_pred: predicted phase
+            title: figure title
             
-        返回:
-            fig: matplotlib图形对象
+        Returns:
+            fig: matplotlib figure object
         """
-        # 转换为numpy数组
+        # Convert to numpy arrays
         freq_np = freq.detach().cpu().numpy() if torch.is_tensor(freq) else np.array(freq)
         rho_obs_np = rho_obs.detach().cpu().numpy() if torch.is_tensor(rho_obs) else np.array(rho_obs)
         phs_obs_np = phs_obs.detach().cpu().numpy() if torch.is_tensor(phs_obs) else np.array(phs_obs)
         rho_pred_np = rho_pred.detach().cpu().numpy() if torch.is_tensor(rho_pred) else np.array(rho_pred)
         phs_pred_np = phs_pred.detach().cpu().numpy() if torch.is_tensor(phs_pred) else np.array(phs_pred)
         
-        # 创建包含两个子图的图形
+        # Figure with two subplots
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
         
-        # 绘制视电阻率对比
+        # Apparent resistivity comparison
         ax1.loglog(freq_np, rho_obs_np, 'ro-', markersize=6, linewidth=2, label='Observed')
         ax1.loglog(freq_np, rho_pred_np, 'b^-', markersize=5, linewidth=2, label='Inverted')
         ax1.set_xlabel('Frequency [Hz]', fontsize=20)
         ax1.set_ylabel('Apparent Resistivity [Ω·m]', fontsize=20)
         ax1.set_title('Apparent Resistivity Comparison', fontsize=25)
         ax1.legend(fontsize=20)
-        ax1.tick_params(axis='both', labelsize=16)  # 坐标数字字体
+        ax1.tick_params(axis='both', labelsize=16)  # tick label font size
         
-        # 绘制相位对比
+        # Phase comparison
         ax2.semilogx(freq_np, phs_obs_np, 'ro-', markersize=6, linewidth=2, label='Observed')
         ax2.semilogx(freq_np, phs_pred_np, 'b^-', markersize=5, linewidth=2, label='Inverted')
         ax2.set_xlabel('Frequency [Hz]', fontsize=20)
         ax2.set_ylabel('Phase [degrees]', fontsize=20)
         ax2.legend(fontsize=20)
-        ax2.tick_params(axis='both', labelsize=16)  # 坐标数字字体
+        ax2.tick_params(axis='both', labelsize=16)  # tick label font size
         
         for ax in [ax1, ax2]:
             ax.spines['top'].set_visible(False)
@@ -470,7 +470,7 @@ class MT1D_3DVisualizer:
             ax.spines['left'].set_visible(True)
             ax.spines['bottom'].set_visible(True)
 
-        # 设置总标题
+        # Super-title
         fig.suptitle(title, fontsize=30, y=0.98)
         
         plt.tight_layout()
@@ -481,26 +481,23 @@ class MT1D_3DVisualizer:
                                     dz_model: torch.Tensor, sig_model: torch.Tensor,
                                     title: str = "MT Data Comparison with Model") -> plt.Figure:
         """
-        从模型预测数据绘制二维对比图
+        Plot a 2D comparison from model-predicted data
         
-        参数:
-            freq: 频率数据
-            rho_obs: 观测视电阻率
-            phs_obs: 观测相位
-            dz_model: 模型层厚度
-            sig_model: 模型电导率
-            title: 图表标题
+        Args:
+            freq: frequency data
+            rho_obs: observed apparent resistivity
+            phs_obs: observed phase
+            dz_model: model layer thicknesses
+            sig_model: model conductivity
+            title: figure title
             
-        返回:
-            fig: matplotlib图形对象
+        Returns:
+            fig: matplotlib figure object
         """
-        # 正演计算模型预测数据
+        # Forward-model predicted data
         zxy_pred, rho_pred, phs_pred = self.mt1d_forward(freq, dz_model, sig_model)
         
-        # 绘制对比图
+        # Plot comparison
         fig = self.plot_comparison_2d(freq, rho_obs, phs_obs, rho_pred, phs_pred, title)
         
         return fig
-
-
-

@@ -1,8 +1,6 @@
 """PrepareData diagnostic plots (extracted)."""
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
-
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -123,6 +121,7 @@ class PrepareDataPlotMixin:
 
     # -------------------------- export: mt_object -> txt --------------------------
 
+    @staticmethod
     def plot_strike_period(self, mt: "PrepareData.CustomMT", unwrap_90: bool = False) -> None:
         """Plot strike vs period for a single station.
 
@@ -162,6 +161,7 @@ class PrepareDataPlotMixin:
         plt.grid()
         plt.show()
 
+    @staticmethod
     def plot_all_strikes_subplots(
         self,
         mt_objects: Sequence["PrepareData.CustomMT"],
@@ -333,6 +333,7 @@ class PrepareDataPlotMixin:
 
     # -------------------------- station projection / profile --------------------------
 
+    @staticmethod
     def plot_station_profile(self, mt_objects: Sequence["PrepareData.CustomMT"], strike: Optional[float] = None):
         lats = np.array([mt.lat for mt in mt_objects])
         lons = np.array([mt.lon for mt in mt_objects])

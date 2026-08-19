@@ -15,16 +15,16 @@ class ExportMixin:
         mt_objects: Optional[Sequence["PrepareData.CustomMT"]] = None,
         *,
         sort_by: str = "profile_pos_m",
-        freq_rtol: float = 1e-6,  # 相对容差
-        freq_atol: float = 1e-8,  # 绝对容差（新增/保留，专门对付低频浮点误差）
+        freq_rtol: float = 1e-6,  # relative tolerance
+        freq_atol: float = 1e-8,  # absolute tolerance (kept for low-frequency float noise)
         device: Optional[str] = None,
         dtype=None,
         save_to_self: bool = True,
     ):
         """
-        提取全局频率并集，使用 NaN 填充缺失数据，生成绝对规则的稠密张量。
-        废弃了强制频率对齐，尊重数据的物理真实缺失。
-        使用 rtol 和 atol 联合控制相近频点的合并。
+        Build a fully regular dense tensor from the global frequency union, filling missing data with NaN.
+        Forced frequency alignment is no longer used; physically missing data are respected.
+        Nearby frequencies are merged jointly by rtol and atol.
         """
         try:
             import torch
@@ -40,7 +40,7 @@ class ExportMixin:
         if need_derived:
             self.compute_rho_phase_all(mt_objects)
 
-        # 1. 排序台站
+        # 1. Sort stations
         mts = list(mt_objects)
         sort_key = sort_by.strip().lower() if sort_by else "none"
         if sort_key in {"profile_pos_m", "profile", "pos", "position"}:
@@ -60,18 +60,18 @@ class ExportMixin:
                 sid = f"S{j + 1}"
             station_ids.append(str(sid))
 
-        # 2. 构建全局频率轴 (Union) 并使用 atol + rtol 联合去重
+        # 2. Build the global frequency axis (union) and deduplicate with atol + rtol
         all_freqs = np.concatenate([np.asarray(getattr(mt, "frequency"), dtype=float) for mt in mts])
         all_freqs = np.sort(all_freqs)
         
-        # 核心合并逻辑：差值 > (atol + rtol * 当前频率) 才认为是不同的频点
+        # Merge rule: frequencies are distinct only if the gap exceeds (atol + rtol * current frequency)
         is_unique = np.append([True], np.diff(all_freqs) > (freq_atol + freq_rtol * all_freqs[:-1]))
         freqs_global = all_freqs[is_unique]
         
         n_freq = len(freqs_global)
         n_stn = len(mts)
 
-        # 3. 初始化全 NaN 矩阵
+        # 3. Initialize arrays with NaN
         rhoxy = np.full((n_freq, n_stn), np.nan, dtype=float)
         phsxy = np.full((n_freq, n_stn), np.nan, dtype=float)
         rhoyx = np.full((n_freq, n_stn), np.nan, dtype=float)
@@ -82,7 +82,7 @@ class ExportMixin:
         zyx_err = np.full((n_freq, n_stn), np.nan, dtype=float)
         any_has_err = False
 
-        # 4. 对号入座
+        # 4. Place each station onto the global frequency axis
         for j, mt in enumerate(mts):
             f_stn = np.asarray(getattr(mt, "frequency"), dtype=float)
             idx_global = np.array([np.abs(freqs_global - f).argmin() for f in f_stn])
@@ -108,7 +108,7 @@ class ExportMixin:
                 zxy_err[idx_global, j] = z_err[:, 0, 1]
                 zyx_err[idx_global, j] = z_err[:, 1, 0]
 
-        # 5. 转换为 Torch Tensor
+        # 5. Convert to torch tensors
         if dtype is None:
             dtype = torch.float64
         freqs_t = torch.as_tensor(freqs_global, dtype=dtype, device=device)
@@ -225,17 +225,17 @@ class ExportMixin:
         encoding: str = "utf-8",
         overwrite: bool = True,
     ) -> Path:
-        """把单个 MT 对象导出为 txt（便于检查/复现）。
+        """Export a single MT object to a text file (for inspection / reproduction).
 
-        兼容两类对象：
-        - 本模块的 `PrepareData.CustomMT`（推荐）
-        - 外部库对象（如 mtpy 风格）：支持 `obj.Z.z` / `obj.Z.z_err` 取值
+        Compatible with two object types:
+        - this module's `PrepareData.CustomMT` (preferred)
+        - external-library objects (e.g. mtpy-style): `obj.Z.z` / `obj.Z.z_err`
 
-        输出为“带注释头 + 表格数据”的纯文本。表格列会尽量覆盖：
+        Output is plain text with a commented header plus a data table. Columns cover:
         - freq_hz, period_s
-        - Z(2x2) 的实部/虚部（按 xx,xy,yx,yy 顺序展开）
-        - 可选：Z_err(2x2)
-        - 可选：rho/phs 及其误差、噪声归一化 std-dev
+        - real/imag parts of Z(2x2) (expanded in xx, xy, yx, yy order)
+        - optional: Z_err(2x2)
+        - optional: rho/phs, their errors, and noise-normalized std-dev
         """
 
         def _maybe_get(obj: Any, names: Sequence[str]) -> Any:

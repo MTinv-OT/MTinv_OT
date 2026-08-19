@@ -16,26 +16,26 @@ class InversionDataMixin:
         outlier_frac: float = 0.05,
         outlier_strength: float = 4.0,
         student_t_df: float = 3.0,
-        static_shift_std: float = 0.0,      # 随机静位移的标准差(对数域)。当提供 static_shift_log 时对对应模式无效
-        shift_modes: tuple = ("xy", "yx"),  # 注入静位移的模式
-        shift_stations: str = "middle",     # 注入静位移的台站选择方式 ('all', 'middle', 'random')
+        static_shift_std: float = 0.0,      # std of random static shift (log domain). Ignored for a mode if static_shift_log is provided
+        shift_modes: tuple = ("xy", "yx"),  # modes that receive static shift
+        shift_stations: str = "middle",     # how to pick shifted stations ('all', 'middle', 'random')
         shift_ratio: float = 0,
-        # 新增：指定确切台站序号（0-based），优先级高于 shift_stations / shift_ratio
+        # Explicit station indices (0-based); takes priority over shift_stations / shift_ratio
         shift_station_indices: Optional[Sequence[int]] = None,
-        # 新增：固定静位移强度（log10 乘子）。可 TE/TM 分别设置。
-        #   - 传标量 float：对选中的台站统一施加该强度
-        #   - 传长度为 n_station 的序列/数组：逐台站指定（0 表示不加）
-        #   - 用 dict 分别设置 e.g. {"xy": 0.25, "yx": -0.1} 或 {"xy": [0,0,0.3,...], "yx": [...]}
-        #   - 若某模式不在 dict 中，则回退到 static_shift_std 随机逻辑（若 std>0）
+        # Fixed static-shift strength (log10 multiplier). TE/TM can be set independently.
+        #   - scalar float: apply the same strength to selected stations
+        #   - sequence/array of length n_station: per-station values (0 means no shift)
+        #   - dict, e.g. {"xy": 0.25, "yx": -0.1} or {"xy": [0,0,0.3,...], "yx": [...]}
+        #   - if a mode is missing from the dict, fall back to random static_shift_std (if std>0)
         static_shift_log: Optional[Dict[str, Union[float, Sequence, np.ndarray, torch.Tensor]]] = None,
     ):
         """
         Generate 2D MT synthetic data: add noise at the impedance level, then
         compute apparent resistivity (rho) and phase (phi) consistently.
 
-        Static shift (静位移) 支持两种方式：
-        1. 随机：使用 static_shift_std + shift_stations / shift_ratio（或 shift_station_indices）
-        2. 固定：通过 static_shift_log 直接指定每模式、每台站的 log10 乘子。
+        Static shift supports two modes:
+        1. Random: static_shift_std + shift_stations / shift_ratio (or shift_station_indices)
+        2. Fixed: static_shift_log specifies the log10 multiplier per mode and station.
 
         Args:
             noise_level: Relative noise level (relative to |Z|)
@@ -46,18 +46,18 @@ class InversionDataMixin:
             outlier_frac: Outlier fraction in [0, 1], only for noise_type=="nongaussian"
             outlier_strength: Outlier strength (multiple of baseline delta), only for "nongaussian"
             student_t_df: Degrees of freedom for Student-t (default 3). Smaller = heavier tails.
-            static_shift_std: 随机静位移 log10 乘子的标准差。0 表示不加随机静位移。
-            shift_modes: 哪些极化模式施加静位移，"xy" 对应 TE（或按惯例），"yx" 对应 TM。
-            shift_stations: 选择受影响台站的方式：
-                - "all": 全部台站
-                - "middle": 中间连续一段（比例 shift_ratio）
-                - "random": 随机抽取（比例 shift_ratio）
-            shift_ratio: 与 "middle"/"random" 配合使用的比例 (0~1)。
-            shift_station_indices: 显式指定受影响台站的序号列表（0-based）。若提供，优先使用此方式。
-            static_shift_log: 固定静位移强度（log10 乘子）。支持 TE/TM 分别设置：
-                - 标量：对选中台站统一使用该值，例如 {"xy": 0.2, "yx": -0.15}
-                - 数组：逐台站指定（长度必须等于台站数），0 表示该台站不加静位移。
-                若提供某模式的固定值，则忽略该模式的 static_shift_std 随机生成。
+            static_shift_std: Std of random static-shift log10 multipliers. 0 means no random static shift.
+            shift_modes: Polarization modes to shift; "xy" is TE (by convention), "yx" is TM.
+            shift_stations: How to choose affected stations:
+                - "all": all stations
+                - "middle": a contiguous middle segment (fraction shift_ratio)
+                - "random": a random subset (fraction shift_ratio)
+            shift_ratio: Fraction used with "middle"/"random" (0~1).
+            shift_station_indices: Explicit 0-based station indices. If given, this takes priority.
+            static_shift_log: Fixed static-shift strength (log10 multiplier). TE/TM can be set independently:
+                - scalar: same value on selected stations, e.g. {"xy": 0.2, "yx": -0.15}
+                - array: per-station values (length must equal n_station); 0 means no shift at that station.
+                If a mode has a fixed value, random static_shift_std is ignored for that mode.
         """
         if noise_type not in ("gaussian", "nongaussian", "student_t"):
             raise ValueError(
@@ -97,11 +97,11 @@ class InversionDataMixin:
         obs_data = {}
         self.data_std = {}   # Store impedance std-dev for error propagation
 
-        # ---------- 确定受静位移影响的台站 mask ----------
+        # ---------- Station mask for static shift ----------
         shift_mask = torch.zeros(n_station, dtype=torch.bool, device=self.device)
 
         if shift_station_indices is not None:
-            # 显式指定台站序号（优先）
+            # Explicit station indices (highest priority)
             idx = torch.as_tensor(list(shift_station_indices), device=self.device, dtype=torch.long)
             idx = idx[(idx >= 0) & (idx < n_station)]
             if len(idx) > 0:
@@ -126,9 +126,9 @@ class InversionDataMixin:
                 shift_mask[idx] = True
             declared_mode = "random"
         else:
-            raise ValueError(f"shift_stations 参数不合法: '{shift_stations}'。")
+            raise ValueError(f"Invalid shift_stations: '{shift_stations}'.")
 
-        # 初始记录（后续若使用固定全数组，可能会根据实际非1因子更新）
+        # Initial record (may be updated later from non-unity factors if a full fixed array is used)
         self.shift_mask = shift_mask.clone()
         self.shift_station_ids = torch.where(shift_mask)[0].cpu().tolist()
         n_shift = int(shift_mask.sum().item())
@@ -140,61 +140,61 @@ class InversionDataMixin:
         self.shift_modes = shift_modes
         self.shift_stations = declared_mode if shift_station_indices is None else "indices"
         self.shift_station_indices = list(shift_station_indices) if shift_station_indices is not None else None
-        # 保存用户传入的固定静位移规格（用于复现/记录）
+        # Store the user-supplied fixed static-shift spec (for reproduction / logging)
         self.static_shift_log_input = static_shift_log if static_shift_log is not None else None
         self.true_data_no_shift = {}
         self.obs_data_no_shift = {}
         self.static_shift_factors = {}
         self.static_shift_log = {}
 
-        # 用于后续根据实际因子校正“受影响台站”
+        # Used later to correct "affected stations" from the actual factors
         actual_affected = torch.zeros(n_station, dtype=torch.bool, device=self.device)
 
         for mode in ["xy", "yx"]:
             Z_base = pred_true[f"Z{mode}"].clone()      # (nf, nstation)
             Z = Z_base
 
-            # 静位移前：真实模型正演视电阻率/相位（无静位移、无噪声）
+            # Before static shift: true-model rho/phase (no static shift, no noise)
             rho_true_clean = torch.abs(Z) ** 2 / (omega * MU)
             phs_true_clean = -torch.atan2(Z.imag, Z.real) * 180.0 / np.pi
             self.true_data_no_shift[f"rho{mode}"] = rho_true_clean.clone()
             self.true_data_no_shift[f"phs{mode}"] = phs_true_clean.clone()
 
-            # 静位移注入：在加噪声之前进行，使噪声随着被放大的阻抗成比例增大
+            # Inject static shift before noise so noise scales with the amplified impedance
             # ===================================================
             applied_log = None
             applied_factor = None
 
-            # 优先使用固定强度（支持 TE/TM 分别设置 + 指定台站）
+            # Prefer fixed strength (independent TE/TM + selected stations)
             if static_shift_log is not None and mode in static_shift_log and static_shift_log[mode] is not None:
                 val = static_shift_log[mode]
                 if isinstance(val, (int, float)):
-                    # 标量：仅对当前 mask 内的台站施加同一固定强度
+                    # Scalar: apply the same fixed strength only to stations in the current mask
                     log_t = torch.zeros(1, n_station, device=self.device, dtype=torch.float64)
                     if shift_mask.any():
                         log_t[0, shift_mask] = float(val)
                     factor_t = 10.0 ** log_t
                 else:
-                    # 数组/序列：用户全权指定每台站的 log10 乘子（长度 = n_station）
+                    # Array/sequence: user specifies the log10 multiplier at every station (length = n_station)
                     log_t = torch.as_tensor(val, device=self.device, dtype=torch.float64).reshape(1, n_station)
                     if log_t.shape[1] != n_station:
                         raise ValueError(
-                            f"static_shift_log[{mode}] 长度必须等于台站数 ({n_station})，"
-                            f"实际得到 {log_t.shape[1]}"
+                            f"static_shift_log[{mode}] length must equal the number of stations ({n_station}), "
+                            f"got {log_t.shape[1]}"
                         )
                     factor_t = 10.0 ** log_t
 
-                # 记录实际应用的
+                # Record what was actually applied
                 effective_shift_log = log_t
                 shift_factor = factor_t
                 applied_log = effective_shift_log
                 applied_factor = shift_factor
 
-                # 将阻抗乘上实数常数
+                # Multiply impedance by a real constant
                 Z = Z * shift_factor
 
             elif static_shift_std > 0.0 and mode in shift_modes:
-                # 传统随机模式（仅在 mask 位置生效）
+                # Legacy random mode (only stations in the mask)
                 shift_log = torch.randn(1, n_station, device=self.device, dtype=torch.float64) * static_shift_std
                 shift_factor = 10.0 ** shift_log
 
@@ -217,7 +217,7 @@ class InversionDataMixin:
             self.static_shift_log[mode] = effective_shift_log.squeeze(0).clone()
             self.static_shift_factors[mode] = shift_factor.squeeze(0).clone()
 
-            # 累积“实际有静位移”的台站（因子 != 1）
+            # Accumulate stations that actually have static shift (factor != 1)
             if applied_factor is not None:
                 nonzero = torch.abs(applied_factor.squeeze(0) - 1.0) > 1e-12
                 actual_affected = actual_affected | nonzero
@@ -228,7 +228,7 @@ class InversionDataMixin:
             delta = noise_level * Zabs
             delta_base = noise_level * Zabs_base
 
-            # --- 1. 生成 Z_obs 专用的噪声 (随静位移变化) ---
+            # --- 1. Noise for Z_obs (scales with static shift) ---
             if noise_type == "student_t":
                 scale = delta * np.sqrt((student_t_df - 2) / student_t_df)
                 dist = torch.distributions.StudentT(df=student_t_df, loc=0.0, scale=scale)
@@ -238,7 +238,7 @@ class InversionDataMixin:
                 noise_real_obs = torch.randn_like(Z.real) * delta
                 noise_imag_obs = torch.randn_like(Z.imag) * delta
 
-            # --- 2. 生成 Z_obs_no_shift 专用的噪声 (仅由原始模型决定) ---
+            # --- 2. Noise for Z_obs_no_shift (from the unshifted model only) ---
             if noise_type == "student_t":
                 scale_base = delta_base * np.sqrt((student_t_df - 2) / student_t_df)
                 dist_base = torch.distributions.StudentT(df=student_t_df, loc=0.0, scale=scale_base)
@@ -248,7 +248,7 @@ class InversionDataMixin:
                 noise_real_base = torch.randn_like(Z_base.real) * delta_base
                 noise_imag_base = torch.randn_like(Z_base.imag) * delta_base
 
-            # --- 3. 叠加噪声 ---
+            # --- 3. Add noise ---
             Z_obs_no_shift = torch.complex(
                 Z_base.real + noise_real_base,
                 Z_base.imag + noise_imag_base
@@ -292,7 +292,7 @@ class InversionDataMixin:
             self.data_std[f"delta_z{mode}_imag"] = delta
             self.data_std[f"Z{mode}"] = Z_obs
 
-        # 根据实际应用的因子校正“受影响台站”信息（对固定全数组场景特别有用）
+        # Correct "affected stations" from the applied factors (especially useful for a full fixed array)
         if actual_affected.any():
             self.shift_mask = actual_affected.clone()
             self.shift_station_ids = torch.where(actual_affected)[0].cpu().tolist()
@@ -320,10 +320,10 @@ class InversionDataMixin:
 
     def load_obs_data(self, data_dict: dict, noise_floor: float = 0.1):
         """
-            data_dict: 须包含 obs_data, data_std
-            noise_floor: 噪声下限（相对误差）。用于：
-                1) _compute_data_weights 的误差下限/兜底
-                2) compute_rms_chi2 的 sigma 下限/兜底（避免由于过小的 sigma 导致 RMS χ² 虚高）
+            data_dict: must contain obs_data, data_std
+            noise_floor: noise floor (relative error). Used for:
+                1) error floor / fallback in _compute_data_weights
+                2) sigma floor / fallback in compute_rms_chi2 (avoids inflated RMS χ² from tiny sigma)
         """
         self.obs_data = {k: v.to(self.device, dtype=torch.float64) for k, v in data_dict["obs_data"].items()}
         station_ids = data_dict.get("station_ids", None)

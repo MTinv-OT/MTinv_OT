@@ -1,6 +1,8 @@
 """
 26/3/15 by cxz
-加了逐点权重w_d的支持，构建了make_weighted_cost_fn函数来生成加权的OT成本函数，并在MT2DInverterWeightedCost类中使用这个加权成本函数初始化Sinkhorn OT Loss。同时提供了compute_w_d_per_point_from_noise方法根据观测数据的噪声水平计算逐点权重。
+Added per-point weight w_d: make_weighted_cost_fn builds a weighted OT cost, used by
+MT2DInverterWeightedCost to initialize the Sinkhorn OT loss. Also provides
+compute_w_d_per_point_from_noise to compute per-point weights from observation noise.
 """
 import torch
 import warnings
@@ -286,7 +288,7 @@ class MT2DInverterWeightedCost(MT2DInverter):
             [w_rhoxy.reshape(-1), w_phsxy.reshape(-1), w_rhoyx.reshape(-1), w_phsyx.reshape(-1)],
             dim=1,
         )
-        # [关键] 先取 valid 点，再在其上归一化，保证返回的 w 满足 mean(w,dim=0)=1（四分量均值均为 1）
+        # Keep only valid points, then normalize so returned w has mean(w, dim=0)=1 (all four components)
         valid_mask = self._get_6d_valid_mask()
         w = w[valid_mask]
 

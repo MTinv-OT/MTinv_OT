@@ -19,39 +19,39 @@ class InversionMetricsMixin:
                               anomaly_z_range: Optional[tuple] = None,
                               eps: float = 1e-12) -> Dict[str, float]:
         """
-        计算模型的恢复率指标。
+        Compute model recovery metrics.
 
         Parameters
         ----------
         sigma_inv : torch.Tensor, optional
-            反演得到的 conductivity 模型。若为 None，则使用当前模型 (self.get_sigma_full())。
+            Inverted conductivity model. If None, use the current model (self.get_sigma_full()).
         sig_true : torch.Tensor, optional
-            真实 conductivity 模型。若为 None，则使用 self.sig_true。
+            True conductivity model. If None, use self.sig_true.
         yn : np.ndarray, optional
-            y 方向网格节点（米）。若为 None，则使用 self.yn。
+            y-direction grid nodes (m). If None, use self.yn.
         zn : np.ndarray, optional
-            z 方向网格节点（米）。若为 None，则使用 self.zn。
+            z-direction grid nodes (m). If None, use self.zn.
         nza : int, optional
-            空气层数。若为 None，则使用 self.nza。
+            Number of air layers. If None, use self.nza.
         anomaly_y_range : tuple, optional
-            异常体的 y 范围 (y_min, y_max)，单位：米。若提供，则计算异常体区域的恢复率。
+            Anomaly y-range (y_min, y_max) in meters. If given, also compute recovery inside the anomaly.
         anomaly_z_range : tuple, optional
-            异常体的 z 范围 (z_min, z_max)，单位：米。若提供，则计算异常体区域的恢复率。
+            Anomaly z-range (z_min, z_max) in meters. If given, also compute recovery inside the anomaly.
         eps : float, default=1e-12
-            防止除零的小量。
+            Small value to avoid division by zero.
 
         Returns
         -------
         dict
-            包含以下键值：
-            - rmse: 均方根误差 (log10 电阻率)
-            - mape: 平均绝对百分比误差 (%)
-            - correlation: 皮尔逊相关系数
-            - ssim: 结构相似性指数 (若 skimage 未安装则为 NaN)
-            - anomaly_rmse: 异常体区域的 RMSE (若未指定 anomaly_y_range/anomaly_z_range 则为 NaN)
-            - anomaly_mape: 异常体区域的 MAPE (若未指定则为 NaN)
+            Keys:
+            - rmse: root-mean-square error (log10 resistivity)
+            - mape: mean absolute percentage error (%)
+            - correlation: Pearson correlation coefficient
+            - ssim: structural similarity index (NaN if skimage is not installed)
+            - anomaly_rmse: RMSE inside the anomaly (NaN if anomaly_y_range/anomaly_z_range are not set)
+            - anomaly_mape: MAPE inside the anomaly (NaN if not specified)
         """
-        # 1) 使用传入参数或对象属性
+        # 1) Use passed arguments or object attributes
         if sigma_inv is None:
             sigma_inv = self.get_sigma_full()
         if sig_true is None:
@@ -65,27 +65,27 @@ class InversionMetricsMixin:
         if nza is None:
             nza = self.nza
 
-        # 2) 提取地下部分（去掉空气层）
+        # 2) Extract the subsurface (drop air layers)
         sigma_inv_earth = sigma_inv[nza:, :].detach().cpu().numpy()
         sigma_true_earth = sig_true[nza:, :].detach().cpu().numpy()
 
-        # 3) 转换为电阻率（对数域）
+        # 3) Convert to resistivity (log domain)
         rho_inv = 1.0 / (sigma_inv_earth + eps)
         rho_true = 1.0 / (sigma_true_earth + eps)
         log_rho_inv = np.log10(rho_inv)
         log_rho_true = np.log10(rho_true)
 
-        # 4) 全局恢复率指标
+        # 4) Global recovery metrics
         # RMSE
         rmse = np.sqrt(np.mean((log_rho_inv - log_rho_true) ** 2))
 
         # MAPE (%)
         mape = np.mean(np.abs(log_rho_inv - log_rho_true) / (np.abs(log_rho_true) + eps)) * 100
 
-        # 皮尔逊相关系数
+        # Pearson correlation
         corr = np.corrcoef(log_rho_inv.flatten(), log_rho_true.flatten())[0, 1]
 
-        # SSIM (可选，需要 skimage)
+        # SSIM (optional; requires skimage)
         try:
             from skimage.metrics import structural_similarity as ssim
             data_range = log_rho_true.max() - log_rho_true.min()
@@ -96,10 +96,10 @@ class InversionMetricsMixin:
         except ImportError:
             ssim_val = np.nan
 
-        # 5) 异常体区域恢复率（如果指定了范围）
+        # 5) Anomaly-region recovery (if ranges are given)
         anomaly_rmse, anomaly_mape = np.nan, np.nan
         if anomaly_y_range is not None and anomaly_z_range is not None:
-            # 计算网格中心坐标
+            # Cell-center coordinates
             y_centers = 0.5 * (yn[:-1] + yn[1:])
             z_centers = 0.5 * (zn[nza:][:-1] + zn[nza:][1:]) if len(zn) > nza + 1 else None
 

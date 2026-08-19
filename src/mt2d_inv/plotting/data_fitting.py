@@ -88,7 +88,7 @@ def plot_rho_fitting_comparison(
         if log_x:
             ax_i.set_xscale("log")
             f_min, f_max = float(freqs.min()), float(freqs.max())
-            ax_i.set_xlim(f_max, f_min)  # 左高频、右低频，与 plot_data_fitting 一致
+            ax_i.set_xlim(f_max, f_min)  # high frequency on the left, low on the right (same as plot_data_fitting)
         if log_y:
             ax_i.set_yscale("log")
         ax_i.set_xlabel("Frequency (Hz)")
@@ -133,7 +133,7 @@ def plot_rho_fitting_from_npz(
             st_km = float(stations[st_idx]) / 1000.0
             station_labels.append(f"S{st_idx + 1} ({st_km:.1f} km)")
         station_label = station_labels if len(station_labels) > 1 else station_labels[0]
-    # 移除了 rho_obs_no_shift 相关代码
+    # rho_obs_no_shift plotting was removed
     return plot_rho_fitting_comparison(
         freqs=d_ot["freqs"],
         rho_true=d_ot[true_key],
@@ -143,7 +143,7 @@ def plot_rho_fitting_from_npz(
         station_idx=station_indices,
         station_label=station_label,
         mode=mode,
-        # 不再传递 rho_obs_no_shift
+        # do not pass rho_obs_no_shift
         **kwargs,
     )
 

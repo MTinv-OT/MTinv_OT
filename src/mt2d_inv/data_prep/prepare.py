@@ -26,11 +26,11 @@ class PrepareData(
     PrepareDataPlotMixin,
 ):
     """
-    - 读取 EDI -> `CustomMT` 列表
-    - 相位张量/走向/偏角修正
-    - 台站投影到剖面坐标，并写回 `profile_pos_m`
-    - 绘图工具（走向、剖面、相位张量椭圆）
-    - 可选：整体旋转阻抗张量
+    - Read EDI files into a list of `CustomMT`
+    - Phase-tensor / strike / declination correction
+    - Project stations onto the profile and write `profile_pos_m`
+    - Plotting helpers (strike, profile, phase-tensor ellipses)
+    - Optional: rotate the impedance tensor as a whole
     """
 
     # -------------------------- Data container --------------------------
@@ -235,14 +235,14 @@ class PrepareData(
         self.compute_rho_phase_all(self.mt_objects)
 
         # =====================================================================
-        # [核心修改]：根据开关决定是否进行强制频率对齐与降采样
+        # Choose forced frequency alignment and downsampling from the switch
         # =====================================================================
         if use_harmonize:
-            # 传统的老路径：强制所有台站取交集对齐 (削足适履)
+            # Legacy path: force all stations onto the frequency intersection (truncate to the common set)
             self._harmonize_frequencies_inplace()
 
             # Optional: downsample frequencies to n_freq_target (log-uniform)
-            # 注意：全局降采样依赖于所有台站频率已经对齐，因此只能在 harmonize 后执行
+            # Note: global downsampling requires aligned frequencies, so it must run after harmonize
             if self.n_freq_target is not None and self.mt_objects:
                 n_available = len(self.mt_objects[0].frequency)
                 if self.n_freq_target > n_available:
@@ -258,10 +258,10 @@ class PrepareData(
                         f"[PrepareData] Downsampled frequencies (after band mask): {n_available} -> {n_after}"
                     )
         else:
-            # 现代的新路径：保留数据的异频原貌，供 export_data_dict_for_2d_inversion 提取全局并集并做 NaN 掩码
+            # New path: keep each station's native frequencies; export_data_dict_for_2d_inversion builds the global union and NaN-masks missing data
             print("[PrepareData] Skipped frequency harmonization. Stations retain their original frequencies.")
             
-            # 如果此时依然设置了降采样，给出警告（因为旧版的 _decimate 是基于强制对齐逻辑写的）
+            # Warn if downsampling is still requested (the legacy _decimate assumes a forced-aligned grid)
             if self.n_freq_target is not None:
                 print(
                     f"[PrepareData] WARNING: n_freq_target={self.n_freq_target} is ignored because "
@@ -482,15 +482,15 @@ class PrepareData(
         strike_true_deg: Optional[float] = None,
         strike_magnetic_deg: Optional[float] = None,
         sort_by: str = "profile_pos_m",
-        freq_rtol: float = 1e-5,        # 并集合并容差
-        freq_atol: float = 1e-7,        # 并集合并容差
+        freq_rtol: float = 1e-5,        # union merge tolerance
+        freq_atol: float = 1e-7,        # union merge tolerance
         device: Optional[str] = None,
         dtype=None,
         save_to_self: bool = True,
     ):
-        """最简一键流程：只组织反演需要的数据，不做任何绘图。"""
+        """Minimal one-shot pipeline: assemble inversion data only, with no plotting."""
 
-        # 1. 读取数据，由 harmonize_freqs 控制是否削足适履，clean_data 控制 OOQ+rel_err+skew 清洗
+        # 1. Load data; harmonize_freqs controls intersection alignment, clean_data controls OOQ+rel_err+skew cleaning
         self.load_mt_objects()
         self.compute_strike()
 
@@ -514,7 +514,7 @@ class PrepareData(
                 print("[run_all_simple] Warning: regional_strike_magnetic is NaN/None; skip rotation")
 
         # ---- export tensors for inversion ----
-        # 干净利落地透传物理控制参数
+        # Pass physical control parameters through unchanged
         return self.export_data_dict_for_2d_inversion(
             self.mt_objects,
             sort_by=sort_by,

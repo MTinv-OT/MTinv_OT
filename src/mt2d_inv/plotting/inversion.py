@@ -744,13 +744,13 @@ def plot_data_fitting(
                 valid = np.isfinite(rho_obs) & (rho_obs > 0)
                 if np.any(valid):
                     rho_obs_valid = rho_obs[valid]
-                    rho_obs_all.append(rho_obs_valid) # 用于计算全局ymin/ymax
+                    rho_obs_all.append(rho_obs_valid) # used to compute global ymin/ymax
                     freqs_valid = freqs[valid]
                     sigma_log_eff = inv.get_effective_data_noise_std(key_rho)
                     sigma_log_eff = sigma_log_eff[:, st_idx].detach().cpu().numpy()[valid] if sigma_log_eff is not None else np.full_like(rho_obs_valid, sigma_rho_floor)
                     if bar_cap is not None: sigma_log_eff = np.minimum(sigma_log_eff, bar_cap)
                     
-                    # 修正：强制 XY 为黑色(k)，YX 为灰色
+                    # Force True XY to black (k) and YX to gray
                     if plot_true_data and rho_true is not None and np.all(np.isfinite(rho_true[valid])):
                         true_color = 'k' if mode == 'xy' else 'gray'
                         ax_rho.plot(freqs_valid, rho_true[valid], "-", color=true_color, lw=2, label=f"True {mode.upper()}")
@@ -775,7 +775,7 @@ def plot_data_fitting(
                 
                 valid = np.isfinite(phs_obs)
                 if np.any(valid):
-                    # 修正：同样强制 Phase 的 True XY 为黑色
+                    # Same for phase: True XY is black
                     if plot_true_data and phs_true is not None and np.all(np.isfinite(phs_true[valid])):
                         ax_phs.plot(freqs[valid], phs_true[valid], "-", color='k' if mode == 'xy' else 'gray', lw=2)
                     ax_phs.errorbar(freqs[valid], phs_obs[valid], fmt='o', ms=4, alpha=0.6, color=color, ecolor=color, elinewidth=1, capsize=2)
