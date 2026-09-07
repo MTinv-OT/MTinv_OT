@@ -1,5 +1,7 @@
 # MTinv_OT
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22636468.svg)](https://doi.org/10.5281/zenodo.22636468)
+
 A research toolbox for 1D/2D magnetotelluric (MT) forward modeling and inversion with **Optimal Transport (OT)** data misfits.
 
 > Within a conventional MT inversion framework, geomloss Sinkhorn geometric OT distances are used as alternatives or complements to classical L2 data misfits, aiming for improved robustness to noise and non-Gaussian errors.
