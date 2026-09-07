@@ -16,18 +16,23 @@ from ..optimizer import OptimizerConfig
 from ..forward.solver import MT2DFD_Torch
 
 def log_gpu_usage() -> float:
-        """Query GPU utilization via nvidia-smi (no extra Python deps)."""
+        """Query GPU utilization via nvidia-smi (no extra Python deps).
+
+        Returns 0.0 when nvidia-smi is unavailable or fails (e.g. CPU-only
+        machines, missing driver, or no NVIDIA GPU) - this is an expected,
+        non-fatal case, not a hidden error.
+        """
         try:
             result = subprocess.check_output(
                 ['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'],
                 encoding='utf-8'
             )
             return float(result.strip().split('\n')[0])
-        except Exception:
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError, IndexError):
             return 0.0
 
 from .data import InversionDataMixin
-from .ot import InversionOTMixin
+from .ot import InversionOTMixin, _LOG_RHO_MIN, _LOG_RHO_MAX, _PHASE_NORM_DEG
 from .regularization import InversionRegularizationMixin
 from .metrics import InversionMetricsMixin
 
@@ -478,7 +483,10 @@ class MT2DInverter(
             mode: Inversion mode ('3dot' / '6dot' / 'mse')
             progress_interval: Logging interval
             current_lambda: Initial regularization weight lambda
-            alpha_x: Weight for horizontal (x) roughness term in model regularization (default 1.0)
+            alpha_x: Weight for horizontal roughness term in model regularization (default 1.0).
+                Note the naming: "x" here means the horizontal profile direction, which
+                elsewhere in this class (yn, dy, ny, stations) is called "y" - alpha_x
+                weights the same horizontal gradient as ConstraintCalculator's "dx"/Rx.
             alpha_z: Weight for vertical (z) roughness term in model regularization (default 1.0)
             use_ot_weights: If True, **3dot** uses (alpha, beta) from data_noise_std. **6dot** always
                 uses uniform marginals; cost geometry is ``sigma_6d`` in ``ot_config`` only.
@@ -634,8 +642,8 @@ class MT2DInverter(
                 data_flat = data.flatten()[valid_mask]
                 if 'rho' in key.lower():
                     val_log = torch.log10(data_flat + 1e-12)
-                    return (val_log - (-2.0)) / (6.0 - (-2.0))
-                return data_flat / 90.0
+                    return (val_log - _LOG_RHO_MIN) / (_LOG_RHO_MAX - _LOG_RHO_MIN)
+                return data_flat / _PHASE_NORM_DEG
 
             pred_rhoxy = _norm_pred('rhoxy', pred_dict['rhoxy'])
             pred_phsxy = _norm_pred('phsxy', pred_dict['phsxy'])
@@ -657,9 +665,9 @@ class MT2DInverter(
             data_flat = data_tensor.flatten()[valid_mask]
             if 'rho' in key.lower():
                 val_log = torch.log10(data_flat + 1e-12)
-                norm_val = (val_log - (-2.0)) / (6.0 - (-2.0))
+                norm_val = (val_log - _LOG_RHO_MIN) / (_LOG_RHO_MAX - _LOG_RHO_MIN)
             else:
-                norm_val = data_flat / 90.0
+                norm_val = data_flat / _PHASE_NORM_DEG
             points = torch.stack([grid_f, grid_s, norm_val], dim=1)
             return points.unsqueeze(0)
 
@@ -1025,6 +1033,13 @@ class MT2DInverter(
                 profile_times["step"].append(time.time() - t0)
             
             with torch.no_grad():
+                # Physical bounds on conductivity, expressed in log-space since
+                # model_log_sigma = log(sigma): sigma in [exp(-11.5), exp(4.6)]
+                # ~= [1.0e-5, 99.5] S/m, i.e. resistivity roughly in
+                # [1.0e-2, 1.0e5] ohm*m - a generous range covering typical
+                # crustal/mantle resistivities while keeping the forward solver
+                # away from near-singular (sigma->0) or near-metallic (sigma
+                # very large) extremes.
                 self.model_log_sigma.clamp_(min=-11.5, max=4.6)
 
             current_gpu_util = log_gpu_usage()

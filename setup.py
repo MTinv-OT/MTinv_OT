@@ -31,10 +31,10 @@ setup(
 	description="Magnetotelluric 1D inversion with OT and 2D FD forward modeling.",
 	long_description=read_long_description(),
 	long_description_content_type="text/markdown",
-	author="lxr, cxz，by",
+	author="Xinran Liu, Xuanzhang Chen, Bo Yang, Ziyu Tang",
 	author_email="xinran.liu@zju.edu.cn",
 	url="https://github.com/MTinv-OT/MTinv_OT",
-	license="",
+	license="MIT",
 	python_requires=">=3.10",
 	package_dir={"": "src"},
 	packages=find_packages("src"),
@@ -43,6 +43,7 @@ setup(
 		"numpy",
 		"matplotlib",
 		"scikit-image",
+		"pandas",
 		# User should install PyTorch version manually
 		"torch",
 	],
@@ -57,8 +58,8 @@ setup(
 		"Programming Language :: Python :: 3",
 		"Programming Language :: Python :: 3 :: Only",
 		"Intended Audience :: Science/Research",
+		"License :: OSI Approved :: MIT License",
 		"Topic :: Scientific/Engineering :: Physics",
 		"Topic :: Scientific/Engineering :: Information Analysis",
 	],
 )
-

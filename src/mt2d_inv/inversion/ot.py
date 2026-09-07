@@ -6,6 +6,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
 
+# Point-cloud normalization ranges shared by every OT cloud-builder below
+# (kept as named constants because the same three literals were previously
+# repeated, unnamed, in several places and had to stay in sync by hand).
+# rho clouds use log10(rho) mapped from [_LOG_RHO_MIN, _LOG_RHO_MAX] to [0, 1];
+# phase clouds use phi (degrees) mapped from [0, _PHASE_NORM_DEG] to [0, 1].
+_LOG_RHO_MIN = -2.0
+_LOG_RHO_MAX = 6.0
+_PHASE_NORM_DEG = 90.0
 
 
 class InversionOTMixin:
@@ -46,9 +54,9 @@ class InversionOTMixin:
         data_flat = data_tensor.flatten()[valid_mask]
         if 'rho' in key.lower():
             val_log = torch.log10(data_flat + 1e-12)
-            norm_val = (val_log - (-2.0)) / (6.0 - (-2.0))
+            norm_val = (val_log - _LOG_RHO_MIN) / (_LOG_RHO_MAX - _LOG_RHO_MIN)
         else:
-            norm_val = data_flat / 90.0
+            norm_val = data_flat / _PHASE_NORM_DEG
             
         # 4) Stack: (Batch, N_valid_points, Dim)
         points = torch.stack([grid_freq, grid_stn, norm_val], dim=1)
@@ -122,8 +130,8 @@ class InversionOTMixin:
             data_flat = data.flatten()[valid_mask]
             if 'rho' in key.lower():
                 val_log = torch.log10(data_flat + 1e-12)
-                return (val_log - (-2.0)) / (6.0 - (-2.0))
-            return data_flat / 90.0
+                return (val_log - _LOG_RHO_MIN) / (_LOG_RHO_MAX - _LOG_RHO_MIN)
+            return data_flat / _PHASE_NORM_DEG
 
         obs_rhoxy = _norm_obs('rhoxy', obs_dict['rhoxy'])
         obs_phsxy = _norm_obs('phsxy', obs_dict['phsxy'])
@@ -152,8 +160,8 @@ class InversionOTMixin:
             data_flat = data.flatten()[valid_mask] # filter prediction data with the same mask
             if 'rho' in key.lower():
                 val_log = torch.log10(data_flat + 1e-12)
-                return (val_log - (-2.0)) / (6.0 - (-2.0))
-            return data_flat / 90.0
+                return (val_log - _LOG_RHO_MIN) / (_LOG_RHO_MAX - _LOG_RHO_MIN)
+            return data_flat / _PHASE_NORM_DEG
 
         pred_rhoxy = _norm_pred('rhoxy', pred_dict['rhoxy'])
         pred_phsxy = _norm_pred('phsxy', pred_dict['phsxy'])

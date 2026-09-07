@@ -1,14 +1,16 @@
-"""
-26/3/15 by cxz
-Added per-point weight w_d: make_weighted_cost_fn builds a weighted OT cost, used by
-MT2DInverterWeightedCost to initialize the Sinkhorn OT loss. Also provides
-compute_w_d_per_point_from_noise to compute per-point weights from observation noise.
+"""Weighted Sinkhorn OT cost for 2D inversion.
+
+``make_weighted_cost_fn`` builds a per-point-weighted OT cost, used by
+``MT2DInverterWeightedCost`` to initialize the Sinkhorn OT loss. This module also
+provides ``compute_w_d_per_point_from_noise`` to derive per-point weights from
+observation noise.
 """
 import torch
 import warnings
 from typing import Optional, Union, List, Tuple
 
 from .base import MT2DInverter
+from .ot import _LOG_RHO_MIN, _LOG_RHO_MAX, _PHASE_NORM_DEG
 
 
 def make_weighted_cost_fn(
@@ -188,8 +190,8 @@ class MT2DInverterWeightedCost(MT2DInverter):
             data_flat = data.flatten()[valid_mask]
             if "rho" in key.lower():
                 val_log = torch.log10(data_flat + 1e-12)
-                return (val_log - (-2.0)) / (6.0 - (-2.0))
-            return data_flat / 90.0
+                return (val_log - _LOG_RHO_MIN) / (_LOG_RHO_MAX - _LOG_RHO_MIN)
+            return data_flat / _PHASE_NORM_DEG
 
         obs_rhoxy = _norm_obs("rhoxy", obs_dict["rhoxy"])
         obs_phsxy = _norm_obs("phsxy", obs_dict["phsxy"])
@@ -213,8 +215,8 @@ class MT2DInverterWeightedCost(MT2DInverter):
             data_flat = data.flatten()[valid_mask]
             if "rho" in key.lower():
                 val_log = torch.log10(data_flat + 1e-12)
-                return (val_log - (-2.0)) / (6.0 - (-2.0))
-            return data_flat / 90.0
+                return (val_log - _LOG_RHO_MIN) / (_LOG_RHO_MAX - _LOG_RHO_MIN)
+            return data_flat / _PHASE_NORM_DEG
 
         pred_rhoxy = _norm_pred("rhoxy", pred_dict["rhoxy"])
         pred_phsxy = _norm_pred("phsxy", pred_dict["phsxy"])

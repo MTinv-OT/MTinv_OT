@@ -14,6 +14,12 @@ class ConstraintCalculator:
     when the same physical model is represented on a refined/coarsened mesh.
     The reference-model term is an area-weighted mean, so it is also stable with
     respect to cell count and padding of the computational mesh.
+
+    Naming note: ``nx``/``dx`` here refer to the horizontal profile direction
+    (matching the ``alpha_x`` roughness weight in ``MT2DInverter.run_inversion``),
+    which the calling ``MT2DInverter`` grid setup instead calls ``ny``/``dy``
+    (``yn`` are the horizontal grid-edge coordinates). ``nz``/``dz`` (vertical /
+    depth direction) are named consistently across both classes.
     """
 
     def __init__(self, nx: int, nz: int, dx, dz, device: str = "cpu"):
