@@ -26,8 +26,9 @@ def make_weighted_cost_fn(
         - sequence of 4: (rhoxy, phsxy, rhoyx, phsyx)
         - torch.Tensor for per-point weights:
             * shape (4,)                 -> same as sequence of 4
-            * shape (M, 4) or (4, M)     -> per-observation-point weights for each dim
-              where M = number of points (= n_freq * n_station)
+            * shape (M, 4) or (4, M)     -> per-point weights for each dim, where M is the
+              number of valid points; both clouds must have M points in the same order.
+              The pair weight is symmetrized as 0.5 * (w_i + w_j) so that C(x, y) = C(y, x)^T.
     """
 
     w_d_tensor: Optional[torch.Tensor] = None
@@ -49,9 +50,9 @@ def make_weighted_cost_fn(
 
     _w_cache = {}
 
-    def _coerce_w_d_for_y(w: torch.Tensor, M: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-        """Return weights with shape (1, 1, M, K) for broadcasting (cached)."""
-        cache_key = (str(device), str(dtype), int(M), tuple(w.shape), int(w.ndim))
+    def _coerce_w_d(w: torch.Tensor, n: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+        """Return weights as (K,) for per-dim weights or (n, K) for per-point weights (cached)."""
+        cache_key = (str(device), str(dtype), int(n), tuple(w.shape), int(w.ndim))
         cached = _w_cache.get(cache_key, None)
         if cached is not None:
             return cached
@@ -60,21 +61,21 @@ def make_weighted_cost_fn(
         if w.ndim == 1:
             if w.numel() != 4:
                 raise ValueError(f"w_d tensor must have 4 elements, got {w.numel()}")
-            # (K,) -> (1,1,1,K)
-            out = w.view(1, 1, 1, -1)
-            _w_cache[cache_key] = out
-            return out
-        if w.ndim == 2:
-            if w.shape == (M, 4):
-                out = w.view(1, 1, M, 4)
-                _w_cache[cache_key] = out
-                return out
-            if w.shape == (4, M):
-                out = w.transpose(0, 1).contiguous().view(1, 1, M, 4)
-                _w_cache[cache_key] = out
-                return out
-            raise ValueError(f"w_d tensor must be shaped (M,4) or (4,M); got {tuple(w.shape)} (M={M})")
-        raise ValueError(f"w_d tensor must be 1D or 2D, got ndim={w.ndim}")
+            out = w
+        elif w.ndim == 2:
+            if w.shape == (n, 4):
+                out = w
+            elif w.shape == (4, n):
+                out = w.transpose(0, 1).contiguous()
+            else:
+                raise ValueError(
+                    f"per-point w_d must be shaped (M,4) or (4,M) and match the number of points "
+                    f"in BOTH clouds; got {tuple(w.shape)} for a cloud with {n} points"
+                )
+        else:
+            raise ValueError(f"w_d tensor must be 1D or 2D, got ndim={w.ndim}")
+        _w_cache[cache_key] = out
+        return out
 
     def cost_fn(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         # x: (B, N, D), y: (B, M, D)
@@ -92,8 +93,19 @@ def make_weighted_cost_fn(
             x_data = x[:, :, 2:2 + K].unsqueeze(2)      # (B, N, 1, K)
             y_data = y[:, :, 2:2 + K].unsqueeze(1)      # (B, 1, M, K)
             d = (x_data - y_data).pow(2)                # (B, N, M, K)
-            w_y = _coerce_w_d_for_y(w_d_tensor, M=M, dtype=x.dtype, device=x.device)[..., :K]
-            d_data = (d * w_y).sum(dim=-1)
+            if w_d_tensor.ndim == 1:
+                # Per-dimension weights: already symmetric.
+                w = _coerce_w_d(w_d_tensor, n=M, dtype=x.dtype, device=x.device)[:K].view(1, 1, 1, K)
+            else:
+                # Per-point weights. geomloss evaluates cost(x, y), cost(y, x), cost(x, x) and
+                # cost(y, y) and assumes C_yx = C_xy^T. Indexing the weight by the column point
+                # only (w_j) breaks that symmetry, so use the symmetric mean 0.5 * (w_i + w_j).
+                # Both clouds share the same valid mask and point order, so index i in x and
+                # index j in y refer to the same (freq, station) list as the rows of w_d.
+                w_x = _coerce_w_d(w_d_tensor, n=N, dtype=x.dtype, device=x.device)[:, :K]
+                w_y = _coerce_w_d(w_d_tensor, n=M, dtype=x.dtype, device=x.device)[:, :K]
+                w = 0.5 * (w_x.view(1, N, 1, K) + w_y.view(1, 1, M, K))
+            d_data = (d * w).sum(dim=-1)
 
         return (w_f * d_freq) + (w_s * d_stn) + d_data
     return cost_fn
