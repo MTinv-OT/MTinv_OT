@@ -88,15 +88,19 @@ from mt2d_inv.plotting import (
 ## Requirements
 
 - Python ≥ 3.10
-- PyTorch (CPU or GPU)
-- numpy, matplotlib, scikit-image, pandas
+- PyTorch (CPU or GPU; install the build matching your hardware)
+- numpy, scipy, matplotlib, scikit-image, pandas
 
 ```bash
+# If you need a specific CPU/CUDA build of PyTorch, install it first using
+# the command selected for your system at https://pytorch.org/get-started/locally/
 pip install -e ".[ot,dev]"
 # or step by step
 pip install -e .
-pip install geomloss jupyter   # OT inversion and notebook experiments
+pip install scipy geomloss jupyter   # runtime dependency, OT, and notebook experiments
 ```
+
+The editable install declares `torch` as a dependency. Installing a compatible PyTorch build first lets pip use that build; selecting a CUDA build is hardware- and driver-specific, so use the official PyTorch instructions rather than a fixed CUDA version here.
 
 If you hit an OpenMP conflict on Windows:
 
@@ -114,7 +118,7 @@ cd MTinv_OT
 pip install -e ".[ot,dev]"
 ```
 
-If a notebook is not launched from the project root, add `src` to `sys.path`:
+The editable install makes `mt2d_inv` and `mt1d_inv` importable without changing `sys.path`. If you are running directly from a source checkout without installing the package, add the checkout's `src` directory (not the repository root) to `sys.path`:
 
 ```python
 import sys
@@ -127,8 +131,9 @@ def find_project_root(start: Path) -> Path:
     raise RuntimeError("Cannot find project root")
 
 root = find_project_root(Path.cwd())
-if str(root) not in sys.path:
-    sys.path.insert(0, str(root))
+src_path = str(root / "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 ```
 
 ---
@@ -220,7 +225,7 @@ Static-shift settings are written to `static_shift.json`; recovery metrics (incl
 
 ## Experiment notebooks
 
-Notebooks under `tests/` locate the project root automatically. Synthetic runs invert **6D OT** (`mode="6dot"`) and/or **MSE** (`mode="mse"`). Field notebooks expect EDI files next to the notebook (or in the folder named in `EDI_DIR`).
+Notebooks under `tests/` locate the project root automatically. Synthetic runs invert **6D OT** (`mode="6dot"`) and/or **MSE** (`mode="mse"`). The field-data notebooks include saved execution outputs/results, but the underlying EDI input files are **not included** in this repository. To rerun them, obtain the corresponding AKBST AMT line L08 or Cascadia EDI data separately, then set `EDI_DIR` in the notebook to the directory containing those files. Without the EDI files, the saved notebook outputs can be inspected, but the field-data preparation and inversion cells cannot be rerun.
 
 ### Convergence — `tests/synthetic/convergence/`
 
@@ -254,6 +259,8 @@ Random log10 static shift (`static_shift_std=0.15`) on a fraction of stations (`
 | `commemi_2d4_21_shift-0.2.ipynb` | COMMEMI 2D-4 | 0.2 |
 
 ### Field data — `tests/AKBST-AMT-L08/` and `tests/Cascadia/`
+
+These folders contain notebooks and their saved outputs only; they do not contain the EDI source data. The default `EDI_DIR` values in the notebooks refer to the expected data directories. Update `EDI_DIR` to the location where you obtained and unpacked the corresponding EDI files before rerunning the data-preparation cells. The repository does not redistribute those input datasets.
 
 | Notebook | Profile |
 |----------|------|
@@ -299,14 +306,35 @@ SSIM from `inv.compute_recovery_rate()['ssim']` matches `plot_model_comparison` 
 The 1D module is independent; entry point `mt1d_inv`:
 
 ```python
-from mt1d_inv import MT1D, MT1DInverter
+import torch
+from mt1d_inv import MT1DInverter
 
-inv = MT1DInverter(device="cuda", use_sinkhorn=True)
-inv.generate_synthetic_data(true_dz=..., true_sig=..., noise_level=0.05)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+true_dz = torch.tensor([500.0, 1000.0], dtype=torch.float32, device=device)
+true_sig = torch.tensor([0.01, 0.001, 0.1], dtype=torch.float32, device=device)
+
+inv = MT1DInverter(device=device, use_sinkhorn=True)
+inv.generate_synthetic_data(
+    true_dz=true_dz,
+    true_sig=true_sig,
+    noise_level=0.05,
+    seed=42,
+)
+inv.initialize_model(
+    n_layers=len(true_sig),
+    total_depth=float(true_dz.sum()),
+    initial_sig=0.01,
+)
+inv.setup_constraints(constraint_type="roughness", use_occam_constraint=True)
+inv.setup_optimizer(lr=0.01)
 inv.run_inversion(num_epochs=800, use_adaptive_lambda=True)
 inv.plot_data_fit()
 inv.plot_model_comparison()
 ```
+
+Here `true_dz` contains the thicknesses of the finite layers (m), and `true_sig` contains their conductivities plus the half-space conductivity (S/m), so `len(true_sig) == len(true_dz) + 1`. `use_sinkhorn=True` requires the `ot` extra (`geomloss`); set it to `False` to use the MSE data loss instead. The model initialization, constraint setup, and optimizer setup are required before `run_inversion()`.
+
+Run 1D and 2D workflows in separate Python processes or notebook kernels. Importing the 2D forward module changes PyTorch's global default floating-point dtype, while the 1D implementation uses float32 in parts of its calculations; reusing the same process can therefore cause dtype conflicts.
 
 ---
 
