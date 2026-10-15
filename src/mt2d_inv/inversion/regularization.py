@@ -1,10 +1,3 @@
-"""Adaptive regularization-weight updates.
-
-The expensive part of the gradient balance is the data-term gradient because it
-triggers the sparse adjoint solve.  This module can return the already computed
-data/model gradients so the inversion loop can reuse them for the optimizer
-update instead of calling ``total_loss.backward()`` a second time.
-"""
 from __future__ import annotations
 
 from typing import Optional
