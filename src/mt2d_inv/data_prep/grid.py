@@ -1,4 +1,4 @@
-"""2D MT data preparation (EDI → tensors, profiles, plotting, etc.).
+"""2D MT data preparation (EDI → tensors, profiles, plotting, etc.)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
