@@ -20,6 +20,12 @@ class MT2DTrueModels:
     * ``create_commemi_2d0`` — legacy grid used by ``test_CM2D-0`` (different return
       signature: ``zn, yn, freq, ry, sig``).
 
+    Shallow synthetic models
+    ------------------------
+    * ``create_buried_dome`` — 1000 Ω·m dome under a 10 Ω·m cover in a 100 Ω·m
+      host, next to a 10 Ω·m block (pure Gaussian-noise tests). Uses the fine
+      ``_shallow_grid`` by default.
+
     Primary literature: M.S. Zhdanov et al., *Journal of Applied Geophysics* 40
     (1997), DOI: https://doi.org/10.1016/S0926-9851(97)00013-X
     """
@@ -614,6 +620,168 @@ class MT2DTrueModels:
         raise ValueError(
             f"Unknown COMMEMI model_id={model_id!r}; use '2d-1' or '2d-4'."
         )
+
+    @staticmethod
+    def _shallow_grid(
+        nza: int = 10,
+        dz0_m: float = 10.0,
+        z_growth_core: float = 1.12,
+        z_core_m: float = 3000.0,
+        z_growth_pad: float = 1.3,
+        z_max_m: float = 300000.0,
+        y_core_half_m: float = 7000.0,
+        dy_core_m: float = 200.0,
+        y_growth_pad: float = 1.4,
+        y_max_m: float = 300000.0,
+        z_air_max_m: float = 100000.0,
+    ):
+        """Fine near-surface grid for shallow (sub-3 km) synthetic models.
+
+        Intended for broadband surveys (about 1e-3 to 1e3 Hz) where the
+        default grid (100 m top cell, 1 km lateral cells) is too coarse.
+
+        - Vertical: first cell ``dz0_m``, geometric growth ``z_growth_core`` down to
+          ``z_core_m``, then faster growth ``z_growth_pad`` down to ``z_max_m``.
+        - Lateral: uniform ``dy_core_m`` cells over ``|y| <= y_core_half_m``, then
+          geometric padding (factor ``y_growth_pad``) out to ``±y_max_m``.
+        - Air: ``nza`` cells, logarithmically from ``dz0_m`` up to ``z_air_max_m``.
+
+        Returns
+        -------
+        (yn, zn, nza)
+        """
+        # ---- Subsurface z nodes (positive down) ----
+        z_nodes = [0.0]
+        dz = float(dz0_m)
+        while z_nodes[-1] < z_core_m:
+            z_nodes.append(z_nodes[-1] + dz)
+            dz *= z_growth_core
+        while z_nodes[-1] < z_max_m:
+            dz *= z_growth_pad
+            z_nodes.append(z_nodes[-1] + dz)
+        z_sub = np.asarray(z_nodes[1:], dtype=float)
+
+        # ---- Air z nodes (negative up); last air cell thickness = dz0_m ----
+        z_air = -np.logspace(np.log10(dz0_m), np.log10(z_air_max_m), nza)
+        z_air = np.flip(z_air)
+
+        zn = np.concatenate([z_air, np.array([0.0]), z_sub])
+
+        # ---- y nodes ----
+        n_core = int(round(2.0 * y_core_half_m / dy_core_m))
+        y_core = np.linspace(-y_core_half_m, y_core_half_m, n_core + 1)
+        pad = []
+        y_last = float(y_core_half_m)
+        dy = float(dy_core_m)
+        while y_last < y_max_m:
+            dy *= y_growth_pad
+            y_last += dy
+            pad.append(y_last)
+        pad = np.asarray(pad, dtype=float)
+        yn = np.concatenate([-pad[::-1], y_core, pad])
+
+        return yn, zn, nza
+
+    @staticmethod
+    def create_buried_dome(
+        zn=None,
+        yn=None,
+        nza=10,
+        device="cpu",
+        rho_host: float = 100.0,
+        rho_overburden: float = 10.0,
+        overburden_thickness_m: float = 500.0,
+        rho_dome: float = 1000.0,
+        dome_center_y_m: float = -2500.0,
+        dome_top_m: float = 300.0,
+        dome_bottom_m: float = 2000.0,
+        dome_top_half_width_m: float = 1000.0,
+        dome_base_half_width_m: float = 1500.0,
+        rho_conductor: float = 10.0,
+        conductor_center_y_m: float = 2500.0,
+        conductor_half_width_m: float = 1000.0,
+        conductor_top_m: float = 800.0,
+        conductor_bottom_m: float = 2000.0,
+    ):
+        """
+        Buried resistive dome under a conductive cover, plus a conductive block.
+
+        Designed for pure-Gaussian-noise comparisons (OT vs MSE). MT is
+        sensitive to conductors and weakly sensitive to resistors, so as noise
+        increases the resistive dome usually blurs first, which separates the
+        behaviour of different misfits.
+
+        Default geometry (z positive down from the surface):
+
+        - Host: ``rho_host`` = 100 Ω·m half-space.
+        - Conductive overburden: ``rho_overburden`` = 10 Ω·m, ``0 <= z < 500 m``.
+        - Resistive dome: ``rho_dome`` = 1000 Ω·m, trapezoid centred at
+          ``y = -2.5 km``; top at 300 m (it pierces the overburden, which thins
+          to 300 m above it), top width 2 km, base width 3 km at 2 km depth.
+        - Conductive block: ``rho_conductor`` = 10 Ω·m, ``|y - 2.5 km| <= 1 km``,
+          ``800 m <= z <= 2000 m`` (beneath the cover).
+
+        Suggested survey: frequencies 1e-3 to 1e3 Hz (4–6 per decade) and
+        station spacing 200–500 m over about ±6 km.
+
+        If ``zn``/``yn`` are not given, ``_shallow_grid`` is used (10 m top cell,
+        200 m lateral core cells) so that the shallow structure is resolved.
+
+        Returns
+        -------
+        (yn, zn, nza, sig_true)
+            ``sig_true`` conductivity (S/m) on cell centers, shape ``(nz, ny)``.
+        """
+        if zn is None and yn is None:
+            yn, zn, nza = MT2DTrueModels._shallow_grid(nza=nza)
+        elif zn is None or yn is None:
+            raise ValueError("create_buried_dome: provide both zn and yn, or neither.")
+        else:
+            zn_np_tmp = zn.cpu().numpy() if isinstance(zn, torch.Tensor) else np.asarray(zn)
+            nza = MT2DTrueModels._infer_nza(zn_np_tmp)
+
+        if dome_top_m >= dome_bottom_m:
+            raise ValueError("dome_top_m must be < dome_bottom_m")
+        if conductor_top_m >= conductor_bottom_m:
+            raise ValueError("conductor_top_m must be < conductor_bottom_m")
+
+        zn_np = zn.cpu().numpy() if isinstance(zn, torch.Tensor) else np.asarray(zn)
+        yn_np = yn.cpu().numpy() if isinstance(yn, torch.Tensor) else np.asarray(yn)
+        z_centers = 0.5 * (zn_np[:-1] + zn_np[1:])
+        y_centers = 0.5 * (yn_np[:-1] + yn_np[1:])
+        Y, Z = np.meshgrid(y_centers, z_centers)
+
+        # 1) Host half-space and air
+        sig = np.ones_like(Y, dtype=float) / float(rho_host)
+        sig[Z < 0] = 1e-9
+
+        # 2) Conductive overburden
+        in_cover = (Z >= 0) & (Z < float(overburden_thickness_m))
+        sig[in_cover] = 1.0 / float(rho_overburden)
+
+        # 3) Conductive block
+        in_cond = (
+            (np.abs(Y - float(conductor_center_y_m)) <= float(conductor_half_width_m))
+            & (Z >= float(conductor_top_m))
+            & (Z <= float(conductor_bottom_m))
+        )
+        sig[in_cond] = 1.0 / float(rho_conductor)
+
+        # 4) Resistive dome (trapezoid; overrides the cover where they overlap)
+        zt, zb = float(dome_top_m), float(dome_bottom_m)
+        frac = np.clip((Z - zt) / (zb - zt), 0.0, 1.0)
+        half_w = float(dome_top_half_width_m) + (
+            float(dome_base_half_width_m) - float(dome_top_half_width_m)
+        ) * frac
+        in_dome = (
+            (Z >= zt)
+            & (Z <= zb)
+            & (np.abs(Y - float(dome_center_y_m)) <= half_w)
+        )
+        sig[in_dome] = 1.0 / float(rho_dome)
+
+        sig_true = torch.tensor(sig, dtype=torch.float64, device=device)
+        return yn, zn, nza, sig_true
 
     @staticmethod
     def create_true_checkerboard(
